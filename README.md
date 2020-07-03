@@ -2,5 +2,5 @@
 Entity-Component-System
 
 
-# Smaples
+# Samples
 https://github.com/shangdibaozi/ecs_start
