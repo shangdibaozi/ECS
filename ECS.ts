@@ -385,6 +385,9 @@ export module ecs {
             let componentTypeId = -1;
             for (let i = 0, len = args.length; i < len; i++) {
                 componentTypeId = args[i];
+                if(componentTypeId == -1) {
+                    throw Error('存在没有注册（ecs.register）的组件！');
+                }
                 let idx = (componentTypeId / 30) >>> 0;
                 let offset = componentTypeId % 30;
                 this.componentFlag[idx] |= 1 << offset;
