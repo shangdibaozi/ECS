@@ -669,8 +669,19 @@ export module ecs {
     export class RootSystem implements ISystem {
         private executeSystemFlows: IExecuteSystem[] = [];
 
+        private debugInfo: HTMLElement;
+
         constructor() {
 
+        }
+
+        initDebug() {
+            this.debugInfo = document.createElement('debugInfo');
+            this.debugInfo.style.position = 'absolute'
+            this.debugInfo.style.top = '20px';
+            this.debugInfo.style.left = '10px';
+            this.debugInfo.style.color = '#ffffff';
+            document.body.appendChild(this.debugInfo);
         }
 
         add(system: ISystem) {
@@ -696,6 +707,19 @@ export module ecs {
                     sys.execute(dt);
                 }
             }
+        }
+
+        debugExecute(dt: number) {
+            let s = '';
+            for (let sys of this.executeSystemFlows) {
+                let startTime = Date.now();
+                if (sys.group.count > 0) { // 与System关联的Group如果没有实体，则不去执行这个System。
+                    sys.execute(dt);
+                }
+                let endTime = Date.now();
+                s += `${sys['__proto__'].constructor.name}: ${(endTime - startTime).toFixed(2)} ms\n`;
+            }
+            this.debugInfo.innerHTML = `<pre>${s}</pre>`;
         }
     }
 
