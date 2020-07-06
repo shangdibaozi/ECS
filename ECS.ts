@@ -452,7 +452,7 @@ export module ecs {
     /**
      * 不包含所有这里面的组件（“与”关系）
      */
-    class NoneAllOf extends AllOf {
+    class NoneAllOf extends AnyOf {
 
         public getKey(): string {
             return 'noneAllOf:' + this.toString();
@@ -718,6 +718,7 @@ export module ecs {
                 }
                 let endTime = Date.now();
                 s += `${sys['__proto__'].constructor.name}: ${(endTime - startTime).toFixed(2)} ms\n`;
+                s += `  |-entity count: ${sys.group.count}\n`;
             }
             this.debugInfo.innerHTML = `<pre>${s}</pre>`;
         }
