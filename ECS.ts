@@ -92,7 +92,7 @@ export module ecs {
         /**
          * 通过实体id查找实体对象
          */
-        private eid2Entity: Map<number, E> = Object.create(null);
+        private eid2Entity: Map<number, E> = new Map();
 
         /**
          * 当前Context下组件类型数量
@@ -108,7 +108,7 @@ export module ecs {
          */
         private readonly componentAddOrRemove: Array<Array<ComponentAddOrRemove>> = null;
 
-        private groups: {[key: string]: Group<E>} = Object.create(null);
+        private groups: Map<string, Group<E>> = new Map();
 
         private entityConstructor: { new(context: Context<E>): E } = null;
 
@@ -124,8 +124,8 @@ export module ecs {
                 this.componentPools[i] = [];
                 this.componentAddOrRemove[i] = [];
             }
-            if (this.totalComponents > 60) {
-                throw new Error('最多支持60种组件！');
+            if (this.totalComponents > 64) {
+                throw new Error('最多支持64种组件！');
             }
         }
 
@@ -135,7 +135,7 @@ export module ecs {
         createEntity(): E {
             let entity = this.entityPool.pop() || new this.entityConstructor(this);
             entity.init(this);
-            this.eid2Entity[entity.eid] = entity;
+            this.eid2Entity.set(entity.eid, entity);
             return entity as E;
         }
 
@@ -146,10 +146,10 @@ export module ecs {
          * @param entity 
          */
         destroyEntity(entity: E) {
-            if (this.eid2Entity[entity.eid]) {
+            if (this.eid2Entity.has(entity.eid)) {
                 entity.destroy();
                 this.entityPool.push(entity);
-                this.eid2Entity[entity.eid] = null;
+                this.eid2Entity.delete(entity.eid);
             }
             else {
                 console.warn('Context.destroyEntity. Entity already destroyed.', entity.eid);
@@ -163,10 +163,10 @@ export module ecs {
          */
         createGroup(matcher: Matcher, systemType: string = 'c'): Group<E> {
             let key = `${systemType}_${matcher.getKey()}`;
-            let group = this.groups[key];
+            let group = this.groups.get(key);
             if (!group) {
                 group = new Group(matcher);
-                this.groups[key] = group;
+                this.groups.set(key, group);
                 let careComponentTypeIds = matcher.indices;
                 for (let i = 0, len = careComponentTypeIds.length; i < len; i++) {
                     this.componentAddOrRemove[careComponentTypeIds[i]].push(group.onComponentAddOrRemove.bind(group));
@@ -176,9 +176,9 @@ export module ecs {
         }
 
         clear() {
-            for(let k in this.groups) {
-                this.groups[k].clearCollectedEntities();
-            }
+            this.groups.forEach((group) => {
+                group.clearCollectedEntities();
+            });
             this.recycleEntities();
         }
 
@@ -186,9 +186,9 @@ export module ecs {
          * 回收所有实体
          */
         recycleEntities() {
-            for (let eid in this.eid2Entity) {
-                this.eid2Entity[eid] && this.destroyEntity(this.eid2Entity[eid]);
-            }
+            this.eid2Entity.forEach((item) => {
+                this.destroyEntity(item);
+            });
         }
 
         createComponent<T extends IComponent>(ctor: ComponentConstructor<T>): T {
@@ -213,7 +213,7 @@ export module ecs {
         }
 
         getEntityByEid(eid: number): E {
-            return this.eid2Entity[eid];
+            return this.eid2Entity.get(eid);
         }
     }
     //----------------------------------------------------------------------------------------------------
@@ -237,10 +237,15 @@ export module ecs {
          * 
          * (1 << 组件类型id%30) -> 得到的是这个组件的“位”
          */
-        private _componentFlag: number[] = [0, 0];
+        private _componentFlag: Uint32Array = new Uint32Array([0, 0]);
         get componentFlag() {
             return this._componentFlag;
         }
+
+        /**
+         * 当前实体身上附加的组件构造函数
+         */
+        private compTid2Ctor: Map<number, ComponentConstructor<IComponent>> = new Map();
 
         public context: Context<Entity>;
 
@@ -265,16 +270,23 @@ export module ecs {
                 console.warn('entity already destroyed.', this.eid);
                 return;
             }
+
             let componentTypeId = ctor.tid;
-            if (this.hasComponent(ctor)) {
-                this.removeComponent(ctor);
-            }
-            let component = this.context.createComponent(ctor);
             let idx = (componentTypeId / 30) >>> 0;
             let offset = componentTypeId % 30;
+            if (!!(this._componentFlag[idx] & (1 << offset))) { // 判断是否有该组件，如果有则先移除
+                this.removeComponent(ctor);
+            }
+            
             this._componentFlag[idx] |= 1 << offset;
+
+            // 创建组件对象
+            let component = this.context.createComponent(ctor);
             // 将组件对象直接附加到实体对象身上，方便直接获取。
             this[ctor.compName] = component;
+
+            this.compTid2Ctor.set(componentTypeId, ctor);
+            // 广播实体添加组件的消息
             this.context.broadcastComponentAddOrRemove(this, componentTypeId);
             return component;
         }
@@ -290,15 +302,17 @@ export module ecs {
         }
 
         removeComponent<T extends IComponent>(ctor: ComponentConstructor<T>) {
-            if (this.hasComponent(ctor)) {
-                let componentTypeId = ctor.tid;
-                let component = this.getComponent(ctor);
-                this.context.putComponent(componentTypeId, component);
+            let componentTypeId = ctor.tid;
+            let idx = (componentTypeId / 30) >>> 0;
+            let offset = componentTypeId % 30;
+            if (!!(this._componentFlag[idx] & (1 << offset))) {
+                this.context.putComponent(componentTypeId, this[ctor.compName]);
                 this[ctor.compName] = null;
-                let idx = (componentTypeId / 30) >>> 0;
-                let offset = componentTypeId % 30;
+                
                 this._componentFlag[idx] &= ~(1 << offset);
                 this.context.broadcastComponentAddOrRemove(this, componentTypeId);
+
+                this.compTid2Ctor.delete(componentTypeId);
             }
         }
 
@@ -310,11 +324,20 @@ export module ecs {
          */
         destroy() {
             let ctor: ComponentConstructor<IComponent>;
-            // TODO: 有没有更好的办法移除实体身上所有的组件。有的实体身上没几个组件，销毁时还是会执行totalComponents次判断。
-            for (let i = this.context.totalComponents - 1; i >= 0; i--) {
-                ctor = this.context.componentTypes[i];
-                this.removeComponent(ctor);
+            let idx = 0;
+            let offset = 0;
+            
+            for(let ctidS in this.compTid2Ctor) {
+                ctor = this.compTid2Ctor[ctidS];
+                idx = (ctor.tid / 30) >>> 0;
+                offset = ctor.tid % 30;
+                this._componentFlag[idx] &= ~(1 << offset);
+                this.context.broadcastComponentAddOrRemove(this, ctor.tid);
+                this[ctor.compName] = null;
             }
+            this.compTid2Ctor.clear();
+            this._componentFlag[0] = 0;
+            this._componentFlag[1] = 0;
             this.context = null;
         }
     }
@@ -333,6 +356,9 @@ export module ecs {
         get matchEntities() {
             return this._matchEntities;
         }
+
+        private eid2idx: Map<number, number> = new Map();
+
         /**
          * 当前group中实体的数量
          */
@@ -342,7 +368,7 @@ export module ecs {
         }
 
         /**
-         * 获取matchEntities中第一个实体
+         * 获取matchEntities中第一个实体，需要自己能保证至少包含1个实体。
          */
         get entity(): E {
             return this.matchEntities[0];
@@ -360,7 +386,7 @@ export module ecs {
             if (this.matcher.isMatch(entity)) { // 判断实体对象是否符合Group的筛选规则，即实体身上是否有Group关注的那几个组件
                 this.addEntity(entity);
             }
-            else {
+            else if(this.eid2idx.has(entity.eid)) { // 如果Group中有这个实体，但是这个实体已经不满足匹配规则，则从Group中移除该实体
                 this.removeEntity(entity);
             }
         }
@@ -371,26 +397,30 @@ export module ecs {
          */
         addEntity(entity: E) {
             this._matchEntities.push(entity);
+            this.eid2idx.set(entity.eid, this.count);
             this._count++;
         }
 
         removeEntity(entity: E) {
-            let idx = this._matchEntities.indexOf(entity);
-            if (idx >= 0) {
-                this._matchEntities[idx] = this._matchEntities[this.count - 1];
-                this._matchEntities.length--;
-                this._count--;
-            }
+            let idx = this.eid2idx.get(entity.eid);
+            // 将最后一个实体的索引交换到要删除实体的位置
+            this._matchEntities[idx] = this._matchEntities[this.count - 1];
+            // 更新被交换实体对应的索引
+            this.eid2idx.set(this._matchEntities[idx].eid, idx);
+            this.eid2idx.delete(entity.eid);
+            this._matchEntities.length--;
+            this._count--;
         }
 
         clearCollectedEntities() {
             this._matchEntities.length = 0;
             this._count = 0;
+            this.eid2idx.clear();
         }
     }
 
     abstract class BaseOf {
-        protected componentFlag: number[] = [0, 0]; // 最多支持60个组件
+        protected componentFlag: Uint32Array = new Uint32Array([0, 0]); // 最多支持64个组件
         public indices: number[] = [];
         constructor(...args: number[]) {
             let componentTypeId = -1;
@@ -427,7 +457,7 @@ export module ecs {
             return !!(entity.componentFlag[0] & this.componentFlag[0]) || !!(entity.componentFlag[1] & this.componentFlag[1]);
         }
 
-        getKey() {
+        getKey(): string {
             return 'anyOf:' + this.toString();
         }
     }
@@ -441,7 +471,7 @@ export module ecs {
                 && ((entity.componentFlag[1] & this.componentFlag[1]) === this.componentFlag[1]);
         }
 
-        getKey() {
+        getKey(): string {
             return 'allOf:' + this.toString();
         }
     }
