@@ -35,6 +35,14 @@ export module ecs {
 
     }
     //----------------------------------------------------------------------------------------------------
+    export interface IRExecuteSystem extends IExecuteSystem {
+        readonly group: Group<Entity>;
+        readonly rGroup: Group<Entity>;
+
+        init(): void;
+        execute(dt: number): void;
+    }
+    //----------------------------------------------------------------------------------------------------
 
     /**
      * 注册组件工具
@@ -84,7 +92,7 @@ export module ecs {
         /**
          * 通过实体id查找实体对象
          */
-        public eid2Entity: Map<number, E> = Object.create(null);
+        private eid2Entity: Map<number, E> = Object.create(null);
 
         /**
          * 当前Context下组件类型数量
@@ -98,9 +106,9 @@ export module ecs {
         /**
          * 每个组件的添加和删除的动作都要派送到“关心”它们的group上。
          */
-        public readonly componentAddOrRemove: Array<Array<ComponentAddOrRemove>> = null;
+        private readonly componentAddOrRemove: Array<Array<ComponentAddOrRemove>> = null;
 
-        private groups: Map<string, Group<E>> = Object.create(null);
+        private groups: {[key: string]: Group<E>} = Object.create(null);
 
         private entityConstructor: { new(context: Context<E>): E } = null;
 
@@ -153,11 +161,11 @@ export module ecs {
          * @param matchCompTypeIds 
          * @param systemType e-表示ExecuteSystem，r-表示ReactiveSystem，c-表示在系统中自己手动调用createGroup创建的筛选规则
          */
-        createGroup<E extends Entity>(matcher: Matcher, systemType: string = 'c'): Group<E> {
+        createGroup(matcher: Matcher, systemType: string = 'c'): Group<E> {
             let key = `${systemType}_${matcher.getKey()}`;
-            let group = this.groups[key] as Group<E>;
+            let group = this.groups[key];
             if (!group) {
-                group = new Group<E>(matcher);
+                group = new Group(matcher);
                 this.groups[key] = group;
                 let careComponentTypeIds = matcher.indices;
                 for (let i = 0, len = careComponentTypeIds.length; i < len; i++) {
@@ -168,6 +176,9 @@ export module ecs {
         }
 
         clear() {
+            for(let k in this.groups) {
+                this.groups[k].clearCollectedEntities();
+            }
             this.recycleEntities();
         }
 
@@ -386,7 +397,7 @@ export module ecs {
             for (let i = 0, len = args.length; i < len; i++) {
                 componentTypeId = args[i];
                 if(componentTypeId == -1) {
-                    throw Error('存在没有注册（ecs.register）的组件！');
+                    throw Error('存在没有注册的组件！');
                 }
                 let idx = (componentTypeId / 30) >>> 0;
                 let offset = componentTypeId % 30;
@@ -587,7 +598,7 @@ export module ecs {
         /**
          * 帧时间
          */
-        public dt: number = 0;
+        protected dt: number = 0;
 
         constructor(context: Context<E>) {
             this.context = context;
@@ -664,24 +675,77 @@ export module ecs {
     }
 
     /**
-     * 所有System的root。对游戏中的System遍历从这里开始。
+     * 结合ExecuteSystem和ReactiveSystem的特性，可以同时处理实体进入System的逻辑，和每帧的逻辑。
+     */
+    export abstract class RExecuteSystem<E extends Entity> implements IRExecuteSystem {
+        public readonly group: Group<Entity>;
+        public readonly rGroup: Group<Entity>;
+
+        protected context: Context<E> = null;
+        private eBuffer: E[] = [];
+        private rBuffer: E[] = [];
+        protected dt: number = 0;
+
+        constructor(context: Context<E>) {
+            this.context = context;
+            this.group = context.createGroup(this.filter(), 'e');
+            this.rGroup = context.createGroup(this.filter(), 'r');
+        }
+
+        init(): void {
+            
+        }
+
+        execute(dt: number): void {
+            this.dt = dt;
+            // 处理刚进来的实体
+            if(this.rGroup.count > 0) {
+                Array.prototype.push.apply(this.rBuffer, this.rGroup.matchEntities);
+                this.rGroup.clearCollectedEntities();
+                this.entityEnter(this.rBuffer);
+                this.rBuffer.length = 0;
+            }
+            // 
+            Array.prototype.push.apply(this.eBuffer, this.group.matchEntities);
+            this.update(this.eBuffer);
+            this.eBuffer.length = 0;
+        }
+        
+        /**
+         * 实体过滤规则
+         * 
+         * 根据提供的组件过滤实体。
+         */
+        abstract filter(): Matcher;
+        abstract entityEnter(entities: E[]): void;
+        abstract update(entities: E[]): void;
+    }
+
+    /**
+     * System的root，对游戏中的System遍历从这里开始。
      */
     export class RootSystem implements ISystem {
         private executeSystemFlows: IExecuteSystem[] = [];
 
         private debugInfo: HTMLElement;
+        private executeCount: {[key: string]: number} = null;
 
         constructor() {
-
+            
         }
 
         initDebug() {
+            this.executeCount = Object.create(null);
             this.debugInfo = document.createElement('debugInfo');
             this.debugInfo.style.position = 'absolute'
             this.debugInfo.style.top = '20px';
             this.debugInfo.style.left = '10px';
             this.debugInfo.style.color = '#ffffff';
             document.body.appendChild(this.debugInfo);
+
+            for(let sys of this.executeSystemFlows) {
+                this.executeCount[sys['__proto__'].constructor.name] = 0;
+            }
         }
 
         add(system: ISystem) {
@@ -712,13 +776,22 @@ export module ecs {
         debugExecute(dt: number) {
             let s = '';
             for (let sys of this.executeSystemFlows) {
+                let sysName = sys['__proto__'].constructor.name;
                 let startTime = Date.now();
                 if (sys.group.count > 0) { // 与System关联的Group如果没有实体，则不去执行这个System。
                     sys.execute(dt);
+                    this.executeCount[sysName]++;
                 }
                 let endTime = Date.now();
-                s += `${sys['__proto__'].constructor.name}: ${(endTime - startTime).toFixed(2)} ms\n`;
-                s += `  |-entity count: ${sys.group.count}\n`;
+                let color = sys.group.count === 0 ? 'white' : 'green'
+                s += `<font blod="" color="${color}"><b>${sysName}: ${endTime - startTime} ms\n`;
+                if(sys instanceof ReactiveSystem) {
+                    s += `  |_execute count: ${this.executeCount[sysName]}\n`;
+                }
+                if(sys.group.count > 0) {
+                    s += `  |_entity count: ${sys.group.count}\n`;
+                }
+                s += '</b></font>';
             }
             this.debugInfo.innerHTML = `<pre>${s}</pre>`;
         }
