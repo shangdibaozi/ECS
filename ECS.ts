@@ -54,7 +54,7 @@ export module ecs {
     /**
      * 组件构造函数
      */
-    let componentConstructors = [];
+    let componentConstructors: ComponentConstructor<IComponent>[] = [];
     /**
      * 由于js打包会改变类名，所以这里必须手动传入组件的名称。
      * @param componentName 
@@ -362,13 +362,12 @@ export module ecs {
         /**
          * 当前group中实体的数量
          */
-        private _count: number = 0;
         get count() {
-            return this._count;
+            return this.eid2idx.size;
         }
 
         /**
-         * 获取matchEntities中第一个实体，需要自己能保证至少包含1个实体。
+         * 获取matchEntities中第一个实体
          */
         get entity(): E {
             return this.matchEntities[0];
@@ -397,8 +396,7 @@ export module ecs {
          */
         addEntity(entity: E) {
             this._matchEntities.push(entity);
-            this.eid2idx.set(entity.eid, this.count);
-            this._count++;
+            this.eid2idx.set(entity.eid, this.eid2idx.size);
         }
 
         removeEntity(entity: E) {
@@ -409,12 +407,10 @@ export module ecs {
             this.eid2idx.set(this._matchEntities[idx].eid, idx);
             this.eid2idx.delete(entity.eid);
             this._matchEntities.length--;
-            this._count--;
         }
 
         clearCollectedEntities() {
             this._matchEntities.length = 0;
-            this._count = 0;
             this.eid2idx.clear();
         }
     }
@@ -467,8 +463,7 @@ export module ecs {
      */
     class AllOf extends BaseOf {
         public isMatch(entity: Entity): boolean {
-            return ((entity.componentFlag[0] & this.componentFlag[0]) === this.componentFlag[0])
-                && ((entity.componentFlag[1] & this.componentFlag[1]) === this.componentFlag[1]);
+            return ((entity.componentFlag[0] & this.componentFlag[0]) === this.componentFlag[0]) && ((entity.componentFlag[1] & this.componentFlag[1]) === this.componentFlag[1]);
         }
 
         getKey(): string {
@@ -480,6 +475,15 @@ export module ecs {
      * 用于描述只包含指定组件的逻辑
      */
     class OnlyOf extends BaseOf {
+
+        constructor(...args: number[]) {
+            super(...args);
+            let ctors = getComponentConstructors();
+            this.indices = new Array(ctors.length);
+            for(let i = 0, len = ctors.length; i < len; i++) {
+                this.indices[i] = ctors[i].tid;
+            }
+        }
 
         public getKey(): string {
             return 'onlyOf:' + this.toString();
@@ -560,7 +564,15 @@ export module ecs {
             for (let i = 0, len = args.length; i < len; i++) {
                 newArgs.push(args[i].tid);
             }
-            this.rules.push(new OnlyOf(...newArgs));
+            this.rules.push(new AllOf(...newArgs));
+            let ctors = getComponentConstructors();
+            let otherTids = [];
+            for(let ctor of ctors) {
+                if(newArgs.indexOf(ctor.tid) < 0) {
+                    otherTids.push(ctor.tid);
+                }
+            }
+            this.rules.push(new NoneAllOf(...otherTids));
             return this;
         }
 
@@ -648,6 +660,7 @@ export module ecs {
              * 加个缓冲层，这样在当前帧中如果有实体删除了组件，不会影响到当前帧_buffer中的实体，但是实体的组件被移除了会导致获取不到组件对象。
              * 在系统中尽量不要直接移除当前系统所关心实体的组价，如果移除了那么在当前系统中获取那个组件的时候还需要额外写if代码进行判断组件是否存在。
              */
+            // TODO: 看看能不能优化这里
             Array.prototype.push.apply(this.buffer, this.group.matchEntities);
             this.update(this.buffer);
             this.buffer.length = 0;
