@@ -147,12 +147,11 @@ export module ecs {
          */
         destroyEntity(entity: E) {
             if (this.eid2Entity.has(entity.eid)) {
-                entity.destroy();
                 this.entityPool.push(entity);
                 this.eid2Entity.delete(entity.eid);
             }
             else {
-                console.warn('Context.destroyEntity. Entity already destroyed.', entity.eid);
+                console.warn('实体没有通过Context对象的createEntity创建或者该实体重复销毁', entity.eid);
             }
         }
 
@@ -177,17 +176,10 @@ export module ecs {
 
         clear() {
             this.groups.forEach((group) => {
-                group.clearCollectedEntities();
+                group.clear();
             });
-            this.recycleEntities();
-        }
-
-        /**
-         * 回收所有实体
-         */
-        recycleEntities() {
-            this.eid2Entity.forEach((item) => {
-                this.destroyEntity(item);
+            this.eid2Entity.forEach((entity) => {
+                entity.destroy();
             });
         }
 
@@ -214,6 +206,10 @@ export module ecs {
 
         getEntityByEid(eid: number): E {
             return this.eid2Entity.get(eid);
+        }
+
+        activeEntityCount() {
+            return this.eid2Entity.size;
         }
     }
     //----------------------------------------------------------------------------------------------------
@@ -323,12 +319,10 @@ export module ecs {
          * 使用context.destroyEntity来回收实体，这样实体可以重复使用
          */
         destroy() {
-            let ctor: ComponentConstructor<IComponent>;
             let idx = 0;
             let offset = 0;
             
-            for(let ctidS in this.compTid2Ctor) {
-                ctor = this.compTid2Ctor[ctidS];
+            for(let ctor of this.compTid2Ctor.values()) {
                 idx = (ctor.tid / 30) >>> 0;
                 offset = ctor.tid % 30;
                 this._componentFlag[idx] &= ~(1 << offset);
@@ -338,6 +332,7 @@ export module ecs {
             this.compTid2Ctor.clear();
             this._componentFlag[0] = 0;
             this._componentFlag[1] = 0;
+            this.context.destroyEntity(this);
             this.context = null;
         }
     }
@@ -352,25 +347,29 @@ export module ecs {
         /**
          * 所有满足的实体，这个数组可能随时添加或移除实体。
          */
-        private _matchEntities: E[] = [];
-        get matchEntities() {
-            return this._matchEntities;
-        }
+        private _matchEntities: Map<number, E> = new Map();
 
-        private eid2idx: Map<number, number> = new Map();
+        private _entitiesCache: E[] = null;
+
+        public get matchEntities() {
+            if(this._entitiesCache === null) {
+                this._entitiesCache = Array.from(this._matchEntities.values());
+            }
+            return this._entitiesCache;
+        }
 
         /**
          * 当前group中实体的数量
          */
         get count() {
-            return this.eid2idx.size;
+            return this._matchEntities.size;
         }
 
         /**
          * 获取matchEntities中第一个实体
          */
         get entity(): E {
-            return this.matchEntities[0];
+            return this._entitiesCache[0];
         }
 
         constructor(matcher: Matcher) {
@@ -383,35 +382,18 @@ export module ecs {
          */
         onComponentAddOrRemove(entity: E) {
             if (this.matcher.isMatch(entity)) { // 判断实体对象是否符合Group的筛选规则，即实体身上是否有Group关注的那几个组件
-                this.addEntity(entity);
+                this._matchEntities.set(entity.eid, entity);
+                this._entitiesCache = null;
             }
-            else if(this.eid2idx.has(entity.eid)) { // 如果Group中有这个实体，但是这个实体已经不满足匹配规则，则从Group中移除该实体
-                this.removeEntity(entity);
+            else if(this._matchEntities.has(entity.eid)) { // 如果Group中有这个实体，但是这个实体已经不满足匹配规则，则从Group中移除该实体
+                this._matchEntities.delete(entity.eid);
+                this._entitiesCache = null;
             }
         }
 
-        /**
-         * 实体身上每种类型的组件只能挂载1个，所以能保证实体被添加进group之后不会再被添加一遍，就不用判断实体是否已存在于matchEntities中。
-         * @param entity 
-         */
-        addEntity(entity: E) {
-            this._matchEntities.push(entity);
-            this.eid2idx.set(entity.eid, this.eid2idx.size);
-        }
-
-        removeEntity(entity: E) {
-            let idx = this.eid2idx.get(entity.eid);
-            // 将最后一个实体的索引交换到要删除实体的位置
-            this._matchEntities[idx] = this._matchEntities[this.count - 1];
-            // 更新被交换实体对应的索引
-            this.eid2idx.set(this._matchEntities[idx].eid, idx);
-            this.eid2idx.delete(entity.eid);
-            this._matchEntities.length--;
-        }
-
-        clearCollectedEntities() {
-            this._matchEntities.length = 0;
-            this.eid2idx.clear();
+        clear() {
+            this._matchEntities.clear();
+            this._entitiesCache = null;
         }
     }
 
@@ -525,8 +507,20 @@ export module ecs {
             return this._indices;
         }
 
-        public static get newInst() {
-            return new Matcher();
+        public static allOf(...args: ComponentConstructor<IComponent>[]) {
+            return new Matcher().allOf(...args);
+        }
+
+        public static anyOf(...args: ComponentConstructor<IComponent>[]) {
+            return new Matcher().anyOf(...args);
+        }
+
+        public static onlyOf(...args: ComponentConstructor<IComponent>[]) {
+            return new Matcher().onlyOf(...args);
+        }
+
+        public static noneAllOf(...args: ComponentConstructor<IComponent>[]) {
+            return new Matcher().noneAllOf(...args);
         }
 
         /**
@@ -557,6 +551,9 @@ export module ecs {
 
         /**
          * 表示关注只拥有这些组件的实体
+         * 
+         * 注意：
+         *  不是特殊情况不建议使用onlyOf。因为onlyOf会监听所有组件的添加和删除事件。
          * @param args 组件索引
          */
         public onlyOf(...args: ComponentConstructor<IComponent>[]): Matcher {
@@ -627,15 +624,10 @@ export module ecs {
     export abstract class ExecuteSystem<E extends Entity> implements IExecuteSystem {
 
         /**
-         * 当前系统关系的组件
+         * 当前系统关心的组件
          */
         public readonly group: Group<E>;
         protected context: Context<E> = null;
-
-        /**
-         * 缓存当前系统收集到的感兴趣的实体。
-         */
-        private buffer: E[] = [];
 
         /**
          * 帧时间
@@ -656,14 +648,7 @@ export module ecs {
 
         execute(dt: number): void {
             this.dt = dt;
-            /**
-             * 加个缓冲层，这样在当前帧中如果有实体删除了组件，不会影响到当前帧_buffer中的实体，但是实体的组件被移除了会导致获取不到组件对象。
-             * 在系统中尽量不要直接移除当前系统所关心实体的组价，如果移除了那么在当前系统中获取那个组件的时候还需要额外写if代码进行判断组件是否存在。
-             */
-            // TODO: 看看能不能优化这里
-            Array.prototype.push.apply(this.buffer, this.group.matchEntities);
-            this.update(this.buffer);
-            this.buffer.length = 0;
+            this.update(this.group.matchEntities);
         }
         /**
          * 实体过滤规则
@@ -683,12 +668,11 @@ export module ecs {
     export abstract class ReactiveSystem<E extends Entity> implements IReactiveSystem {
 
         /**
-         * 当前系统关系的组件
+         * 当前系统关心的组件
          */
         public readonly group: Group<E>;
         protected context: Context<E> = null;
-
-        private buffer: E[] = [];
+        protected dt: number = 0;
 
         constructor(context: Context<E>) {
             this.context = context;
@@ -700,13 +684,12 @@ export module ecs {
         }
 
         execute(dt: number): void {
+            this.dt = dt;
             /**
              * 加个缓冲层，这样在当前帧中如果有实体删除了组件，不会影响到当前帧buffer中的实体
              */
-            Array.prototype.push.apply(this.buffer, this.group.matchEntities);
-            this.group.clearCollectedEntities();
-            this.update(this.buffer);
-            this.buffer.length = 0;
+            this.update(this.group.matchEntities);
+            this.group.clear();
         }
         /**
          * 实体过滤规则
@@ -718,15 +701,26 @@ export module ecs {
     }
 
     /**
+     * 自动回收实体的ReactiveSystem，直接通过context.destroyEntity回收实体。
+     */
+    export abstract class AutoDestroyEntityReactiveSystem<E extends Entity> extends ReactiveSystem<E> {
+        execute(dt: null): void {
+            this.update(this.group.matchEntities);
+            for(let e of this.group.matchEntities) {
+                e.destroy();
+            }
+            this.group.clear();
+        }
+    }
+
+    /**
      * 结合ExecuteSystem和ReactiveSystem的特性，可以同时处理实体进入System的逻辑，和每帧的逻辑。
      */
     export abstract class RExecuteSystem<E extends Entity> implements IRExecuteSystem {
-        public readonly group: Group<Entity>;
-        public readonly rGroup: Group<Entity>;
+        public readonly group: Group<E>;
+        public readonly rGroup: Group<E>;
 
         protected context: Context<E> = null;
-        private eBuffer: E[] = [];
-        private rBuffer: E[] = [];
         protected dt: number = 0;
 
         constructor(context: Context<E>) {
@@ -743,15 +737,11 @@ export module ecs {
             this.dt = dt;
             // 处理刚进来的实体
             if(this.rGroup.count > 0) {
-                Array.prototype.push.apply(this.rBuffer, this.rGroup.matchEntities);
-                this.rGroup.clearCollectedEntities();
-                this.entityEnter(this.rBuffer);
-                this.rBuffer.length = 0;
+                this.entityEnter(this.rGroup.matchEntities);
+                this.rGroup.clear();
             }
             // 
-            Array.prototype.push.apply(this.eBuffer, this.group.matchEntities);
-            this.update(this.eBuffer);
-            this.eBuffer.length = 0;
+            this.update(this.group.matchEntities);
         }
         
         /**
@@ -773,8 +763,10 @@ export module ecs {
         private debugInfo: HTMLElement;
         private executeCount: {[key: string]: number} = null;
 
-        constructor() {
-            
+        private context: ecs.Context<Entity>;
+
+        constructor(context: ecs.Context<Entity>) {
+            this.context = context;
         }
 
         initDebug() {
@@ -825,17 +817,19 @@ export module ecs {
                     sys.execute(dt);
                     this.executeCount[sysName]++;
                 }
+                
                 let endTime = Date.now();
                 let color = sys.group.count === 0 ? 'white' : 'green'
-                s += `<font blod="" color="${color}"><b>${sysName}: ${endTime - startTime} ms\n`;
+                s += `<font size="2" color="${color}">${sysName}: ${endTime - startTime} ms\n`;
                 if(sys instanceof ReactiveSystem) {
                     s += `  |_execute count: ${this.executeCount[sysName]}\n`;
                 }
                 if(sys.group.count > 0) {
                     s += `  |_entity count: ${sys.group.count}\n`;
                 }
-                s += '</b></font>';
+                s += '</font>';
             }
+            s += `Active entity count: ${this.context.activeEntityCount()}`;
             this.debugInfo.innerHTML = `<pre>${s}</pre>`;
         }
     }
