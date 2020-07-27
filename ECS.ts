@@ -139,6 +139,14 @@ export module ecs {
             return entity as E;
         }
 
+        createEntityWithComp(...ctors: ComponentConstructor<IComponent>[]): E {
+            let entity = this.createEntity();
+            for(let ctor of ctors) {
+                entity.addComponent(ctor);
+            }
+            return entity;
+        }
+
         /**
          * 销毁实体。
          * 
@@ -160,7 +168,7 @@ export module ecs {
          * @param matchCompTypeIds 
          * @param systemType e-表示ExecuteSystem，r-表示ReactiveSystem，c-表示在系统中自己手动调用createGroup创建的筛选规则
          */
-        createGroup(matcher: Matcher, systemType: string = 'c'): Group<E> {
+        createGroup(matcher: IMatcher, systemType: string = 'c'): Group<E> {
             let key = `${systemType}_${matcher.getKey()}`;
             let group = this.groups.get(key);
             if (!group) {
@@ -342,7 +350,7 @@ export module ecs {
         /**
          * 实体筛选规则
          */
-        private matcher: Matcher;
+        private matcher: IMatcher;
 
         /**
          * 所有满足的实体，这个数组可能随时添加或移除实体。
@@ -372,16 +380,17 @@ export module ecs {
             return this._entitiesCache[0];
         }
 
-        constructor(matcher: Matcher) {
+        constructor(matcher: IMatcher) {
             this.matcher = matcher;
         }
 
         /**
          * 实体添加或删除组件回调
-         * @param entity 实体对象
+         * @param entity 
+         * @param ctid 组件id；如果实体添加组件，是不需要传ctid，那么它的默认值就是-1；如果实体移除组件，则会传递被移除组件的组件类型id过来
          */
         onComponentAddOrRemove(entity: E) {
-            if (this.matcher.isMatch(entity)) { // 判断实体对象是否符合Group的筛选规则，即实体身上是否有Group关注的那几个组件
+            if (this.matcher.isMatch(entity)) { // Group只关心指定组件在实体身上的添加和删除动作。
                 this._matchEntities.set(entity.eid, entity);
                 this._entitiesCache = null;
             }
@@ -490,10 +499,20 @@ export module ecs {
         }
     }
 
-    export class Matcher {
+    export interface IMatcher {
+        indices: number[];
+        getKey(): string;
+        isMatch(entity: Entity): boolean;
+    }
 
-        private rules: BaseOf[] = [];
-        private _indices: number[] = null;
+    /**
+     * 筛选规则间是“与”的关系
+     * 比如：ecs.Macher.allOf(...).noneAllOf(...)表达的是allOf && noneAllOf，即实体有“这些组件” 并且 “没有这些组件”
+     */
+    export class Matcher implements IMatcher {
+
+        protected rules: BaseOf[] = [];
+        protected _indices: number[] = null;
         /**
          * 匹配器关注的组件索引。在创建Group时，Context根据组件id去给Group关联组件的添加和移除事件。
          */
@@ -507,6 +526,11 @@ export module ecs {
             return this._indices;
         }
 
+        /**
+         * 表示只关心这些组件的添加和删除动作。虽然实体可能有这些组件之外的组件，但是它们的添加和删除没有被关注，所以不会存在对关注之外的组件
+         * 进行添加操作引发Group重复添加实体。
+         * @param args 
+         */
         public static allOf(...args: ComponentConstructor<IComponent>[]) {
             return new Matcher().allOf(...args);
         }
@@ -591,7 +615,7 @@ export module ecs {
             for (let i = 0; i < this.rules.length; i++) {
                 s += this.rules[i].getKey()
                 if (i < this.rules.length - 1) {
-                    s += '|'
+                    s += ' && '
                 }
             }
             return s;
@@ -603,17 +627,65 @@ export module ecs {
             }
             else if (this.rules.length === 2) {
                 return this.rules[0].isMatch(entity) && this.rules[1].isMatch(entity);
-            }
-            else if (this.rules.length === 3) {
-                return this.rules[0].isMatch(entity) && this.rules[1].isMatch(entity) && this.rules[2].isMatch(entity);
-            }
+            } 
             else {
-                for (let i = 0; i < this.rules.length; i++) {
-                    if (!this.rules[i].isMatch(entity)) {
+                for(let rule of this.rules) {
+                    if(!rule.isMatch(entity)) {
                         return false;
                     }
                 }
                 return true;
+            }
+        }
+    }
+
+    /**
+     * 用来表示“或”关系的筛选规则
+     * 比如：ecs.OrMacher.or(ecs.Matcher.allOf(...), ecs.Macher.allOf(...))表示allOf || allOf，即实体“有这些组件” 或者 “有这些组件”。
+     */
+    export class OrMatcher extends Matcher {
+
+        public static allOf(...args: ComponentConstructor<IComponent>[]) {
+            return new OrMatcher().allOf(...args);
+        }
+
+        public static anyOf(...args: ComponentConstructor<IComponent>[]) {
+            return new OrMatcher().anyOf(...args);
+        }
+
+        public static onlyOf(...args: ComponentConstructor<IComponent>[]) {
+            return new OrMatcher().onlyOf(...args);
+        }
+
+        public static noneAllOf(...args: ComponentConstructor<IComponent>[]) {
+            return new OrMatcher().noneAllOf(...args);
+        }
+        
+        getKey(): string {
+            let s = '';
+            for(let i = 0, len = this.rules.length; i < len; i++) {
+                s += this.rules[i].getKey();
+                if(i < len - 1) {
+                    s += ' || ';
+                }
+            }
+            return s;
+        }
+
+        isMatch(entity: Entity): boolean {
+            if(this.rules.length === 2) {
+                return this.rules[0].isMatch(entity) || this.rules[1].isMatch(entity);
+            }
+            else if(this.rules.length === 1) {
+                return this.rules[0].isMatch(entity);
+            }
+            else {
+                for(let rule of this.rules) {
+                    if(rule.isMatch(entity)) {
+                        return true;
+                    }
+                }
+                return false;
             }
         }
     }
@@ -749,7 +821,7 @@ export module ecs {
          * 
          * 根据提供的组件过滤实体。
          */
-        abstract filter(): Matcher;
+        abstract filter(): IMatcher;
         abstract entityEnter(entities: E[]): void;
         abstract update(entities: E[]): void;
     }
@@ -773,7 +845,7 @@ export module ecs {
             this.executeCount = Object.create(null);
             this.debugInfo = document.createElement('debugInfo');
             this.debugInfo.style.position = 'absolute'
-            this.debugInfo.style.top = '20px';
+            this.debugInfo.style.top = '60px';
             this.debugInfo.style.left = '10px';
             this.debugInfo.style.color = '#ffffff';
             document.body.appendChild(this.debugInfo);
@@ -820,7 +892,7 @@ export module ecs {
                 
                 let endTime = Date.now();
                 let color = sys.group.count === 0 ? 'white' : 'green'
-                s += `<font size="2" color="${color}">${sysName}: ${endTime - startTime} ms\n`;
+                s += `<font size="1" color="${color}">${sysName}: ${endTime - startTime} ms\n`;
                 if(sys instanceof ReactiveSystem) {
                     s += `  |_execute count: ${this.executeCount[sysName]}\n`;
                 }
