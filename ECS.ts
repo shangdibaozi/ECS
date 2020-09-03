@@ -1,10 +1,14 @@
 export module ecs {
-    
+    //#region 类型声明
     type ComponentConstructor<T> = {
         tid: number;
         compName : string;
         new() : T;
     }
+    type ComponentAddOrRemove = (entity: Entity) => void;
+    //#endregion
+
+    export let context: Context<Entity> = null;
     /**
      * 组件可能是从组件缓存池中取出来的，这个时候组件中的数据是销毁前的数据，这可能会导致逻辑行为的不确定。
      * 所以在得到组件后要注意某些数据的初始化工作。
@@ -19,34 +23,7 @@ export module ecs {
          */
         static compName: string = null;
     }
-    //----------------------------------------------------------------------------------------------------
-    export interface ISystem {
-
-    }
-
-    //----------------------------------------------------------------------------------------------------
-    export interface IExecuteSystem extends ISystem {
-        readonly group: Group<Entity>;
-        init(): void;
-        execute(dt: number): void;
-    }
-    //----------------------------------------------------------------------------------------------------
-    export interface IReactiveSystem extends IExecuteSystem {
-
-    }
-    //----------------------------------------------------------------------------------------------------
-    export interface IRExecuteSystem extends IExecuteSystem {
-        readonly group: Group<Entity>;
-        readonly rGroup: Group<Entity>;
-
-        init(): void;
-        execute(dt: number): void;
-    }
-    //----------------------------------------------------------------------------------------------------
-
-    /**
-     * 注册组件工具
-     */
+    
     /**
      * 组件类型id
      */
@@ -72,11 +49,29 @@ export module ecs {
         }
     }
 
-    export function getComponentConstructors() {
-        return componentConstructors;
+    /**
+     * 为了增强实体的扩展性，实体的构造函数需要从外部传递进来。
+     * @param eCtor 实体构造函数
+     */
+    export function initContext<E extends Entity>(eCtor: { new(context: Context<E>): E }) {
+        context = new Context(eCtor, componentConstructors);
     }
-    //----------------------------------------------------------------------------------------------------
-    type ComponentAddOrRemove = (entity: Entity) => void;
+
+    /**
+     * 指定一个组件创建实体，返回组件对象。
+     * @param ctor 
+     */
+    export function createEntityWithComp<T extends IComponent>(ctor: ComponentConstructor<T>): T {
+        return context.createEntityWithComp(ctor);
+    }
+
+    /**
+     * 指定多个组件创建实体，返回实体对象。
+     * @param ctors 
+     */
+    export function createEntityWithComps<E extends Entity>(...ctors: ComponentConstructor<IComponent>[]): E {
+        return context.createEntityWithComps(...ctors) as E;
+    }
 
     export class Context<E extends Entity> {
 
@@ -139,10 +134,23 @@ export module ecs {
             return entity as E;
         }
 
-        createEntityWithComp(...ctors: ComponentConstructor<IComponent>[]): E {
+        /**
+         * 指定一个组件创建实体，返回组件对象。
+         * @param ctor 
+         */
+        createEntityWithComp<T extends IComponent>(ctor: ComponentConstructor<T>): T {
+            let entity = this.createEntity();
+            return entity.add(ctor);
+        }
+
+        /**
+         * 指定多个组件创建实体，返回实体对象。
+         * @param ctors 
+         */
+        createEntityWithComps(...ctors: ComponentConstructor<IComponent>[]): E {
             let entity = this.createEntity();
             for(let ctor of ctors) {
-                entity.addComponent(ctor);
+                entity.add(ctor);
             }
             return entity;
         }
@@ -220,7 +228,51 @@ export module ecs {
             return this.eid2Entity.size;
         }
     }
-    //----------------------------------------------------------------------------------------------------
+
+    class Mask {
+        private mask: Uint32Array = null;
+
+        constructor() {
+            let length = Math.ceil(compTid / 32);
+            this.mask = new Uint32Array(length);
+        }
+
+        set(num: number) {
+            this.mask[((num / 32) >>> 0)] |= (1 << (num % 32));
+        }
+
+        delete(num: number) {
+            this.mask[((num / 32) >>> 0)] &= ~(1 << (num % 32));
+        }
+
+        has(num: number) {
+            return !!(this.mask[((num / 32) >>> 0)] & (1 << (num % 32)));
+        }
+
+        or(other: Mask) {
+            for(let i = 0, len = this.mask.length; i < len; i++) {
+                if(this.mask[i] & other.mask[i]) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        and(other: Mask) {
+            for(let i = 0, len = this.mask.length; i < len; i++) {
+                if((this.mask[i] & other.mask[i]) != this.mask[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        clear() {
+            for(let i = 0, len = this.mask.length; i < len; i++) {
+                this.mask[i] = 0;
+            }
+        }
+    }
 
     export class Entity {
         /**
@@ -232,19 +284,7 @@ export module ecs {
          */
         public readonly eid: number = -1;
 
-        /**
-         * 用来标识组件是否存在。
-         * 
-         * 在JavaScript中1左移最多30位，超过30位就溢出了。实际工程中组件的个数可能大于30个，所以用了数组，这样能描述更高位的数据。
-         * 
-         * Math.floor(组件类型id/30) -> 得到的是数组的索引，表示这个组件的位数据在这个索引下的数值里面
-         * 
-         * (1 << 组件类型id%30) -> 得到的是这个组件的“位”
-         */
-        private _componentFlag: Uint32Array = new Uint32Array([0, 0]);
-        get componentFlag() {
-            return this._componentFlag;
-        }
+        public mask = new Mask();
 
         /**
          * 当前实体身上附加的组件构造函数
@@ -269,20 +309,17 @@ export module ecs {
          * 注意：不要直接new Component，new来的Component不会从Component的缓存池拿缓存的数据。
          * @param componentTypeId 组件id
          */
-        addComponent<T extends IComponent>(ctor: ComponentConstructor<T>): T {
+        add<T extends IComponent>(ctor: ComponentConstructor<T>): T {
             if (!this.context) {
                 console.warn('entity already destroyed.', this.eid);
                 return;
             }
 
             let componentTypeId = ctor.tid;
-            let idx = (componentTypeId / 30) >>> 0;
-            let offset = componentTypeId % 30;
-            if (!!(this._componentFlag[idx] & (1 << offset))) { // 判断是否有该组件，如果有则先移除
-                this.removeComponent(ctor);
+            if(this.mask.has(componentTypeId)) {// 判断是否有该组件，如果有则先移除
+                this.remove(ctor);
             }
-            
-            this._componentFlag[idx] |= 1 << offset;
+            this.mask.set(componentTypeId);
 
             // 创建组件对象
             let component = this.context.createComponent(ctor);
@@ -295,56 +332,44 @@ export module ecs {
             return component;
         }
 
-        getComponent<T extends IComponent>(ctor: ComponentConstructor<T>): T {
+        get<T extends IComponent>(ctor: ComponentConstructor<T>): T {
             return this[ctor.compName];
         }
 
-        hasComponent<T extends IComponent>(ctor: ComponentConstructor<T>): boolean {
-            let idx = (ctor.tid / 30) >>> 0;
-            let offset = ctor.tid % 30;
-            return !!(this._componentFlag[idx] & (1 << offset));
+        has<T extends IComponent>(ctor: ComponentConstructor<T>): boolean {
+            return !!this.get(ctor);
         }
 
-        removeComponent<T extends IComponent>(ctor: ComponentConstructor<T>) {
+        remove<T extends IComponent>(ctor: ComponentConstructor<T>) {
             let componentTypeId = ctor.tid;
-            let idx = (componentTypeId / 30) >>> 0;
-            let offset = componentTypeId % 30;
-            if (!!(this._componentFlag[idx] & (1 << offset))) {
+            if(this.mask.has(componentTypeId)) {
                 this.context.putComponent(componentTypeId, this[ctor.compName]);
                 this[ctor.compName] = null;
-                
-                this._componentFlag[idx] &= ~(1 << offset);
+                this.mask.delete(componentTypeId);
                 this.context.broadcastComponentAddOrRemove(this, componentTypeId);
-
                 this.compTid2Ctor.delete(componentTypeId);
             }
         }
 
         /**
-         * 销毁实体，这个过程会回收实体身上的所有组件。不建议在单个系统中调用这个方法销毁实体。可能会导致System的for循环遍历出现问题。
-         * 最好在同一个销毁实体系统中调用这个方法。
-         * 
-         * 使用context.destroyEntity来回收实体，这样实体可以重复使用
+         * 销毁实体，实体会被回收到实体缓存池中。
          */
         destroy() {
             let idx = 0;
             let offset = 0;
             
             for(let ctor of this.compTid2Ctor.values()) {
-                idx = (ctor.tid / 30) >>> 0;
-                offset = ctor.tid % 30;
-                this._componentFlag[idx] &= ~(1 << offset);
+                this.mask.delete(ctor.tid);
                 this.context.broadcastComponentAddOrRemove(this, ctor.tid);
                 this[ctor.compName] = null;
             }
             this.compTid2Ctor.clear();
-            this._componentFlag[0] = 0;
-            this._componentFlag[1] = 0;
+            this.mask.clear();
             this.context.destroyEntity(this);
             this.context = null;
         }
     }
-    //----------------------------------------------------------------------------------------------------
+    
 
     export class Group<E extends Entity> {
         /**
@@ -352,13 +377,14 @@ export module ecs {
          */
         private matcher: IMatcher;
 
-        /**
-         * 所有满足的实体，这个数组可能随时添加或移除实体。
-         */
+        
         private _matchEntities: Map<number, E> = new Map();
 
         private _entitiesCache: E[] = null;
 
+        /**
+         * 符合规则的实体
+         */
         public get matchEntities() {
             if(this._entitiesCache === null) {
                 this._entitiesCache = Array.from(this._matchEntities.values());
@@ -367,11 +393,11 @@ export module ecs {
         }
 
         /**
-         * 当前group中实体的数量
+         * 当前group中实体的数量。
+         * 
+         * 不要手动修改这个属性值。
          */
-        get count() {
-            return this._matchEntities.size;
-        }
+        public count = 0; // 其实可以通过this._matchEntities.size获得实体数量，但是需要封装get方法。为了减少一次方法的调用所以才直接创建一个count属性
 
         /**
          * 获取matchEntities中第一个实体
@@ -393,38 +419,42 @@ export module ecs {
             if (this.matcher.isMatch(entity)) { // Group只关心指定组件在实体身上的添加和删除动作。
                 this._matchEntities.set(entity.eid, entity);
                 this._entitiesCache = null;
+                this.count++;
             }
             else if(this._matchEntities.has(entity.eid)) { // 如果Group中有这个实体，但是这个实体已经不满足匹配规则，则从Group中移除该实体
                 this._matchEntities.delete(entity.eid);
                 this._entitiesCache = null;
+                this.count--;
             }
         }
 
         clear() {
             this._matchEntities.clear();
             this._entitiesCache = null;
+            this.count = 0;
         }
     }
 
     abstract class BaseOf {
-        protected componentFlag: Uint32Array = new Uint32Array([0, 0]); // 最多支持64个组件
+        protected mask = new Mask();
         public indices: number[] = [];
         constructor(...args: number[]) {
             let componentTypeId = -1;
-            for (let i = 0, len = args.length; i < len; i++) {
+            let len = args.length;
+            for (let i = 0; i < len; i++) {
                 componentTypeId = args[i];
                 if(componentTypeId == -1) {
                     throw Error('存在没有注册的组件！');
                 }
-                let idx = (componentTypeId / 30) >>> 0;
-                let offset = componentTypeId % 30;
-                this.componentFlag[idx] |= 1 << offset;
+                this.mask.set(componentTypeId);
 
                 if (this.indices.indexOf(args[i]) < 0) { // 去重
                     this.indices.push(args[i]);
                 }
             }
-            this.indices.sort((a, b) => { return a - b; }); // 对组件类型id进行排序，这样关注相同组件的系统就能共用同一个group
+            if(len > 1) {
+                this.indices.sort((a, b) => { return a - b; }); // 对组件类型id进行排序，这样关注相同组件的系统就能共用同一个group
+            }
         }
 
         public toString(): string {
@@ -441,7 +471,7 @@ export module ecs {
      */
     class AnyOf extends BaseOf {
         public isMatch(entity: Entity): boolean {
-            return !!(entity.componentFlag[0] & this.componentFlag[0]) || !!(entity.componentFlag[1] & this.componentFlag[1]);
+            return this.mask.or(entity.mask);
         }
 
         getKey(): string {
@@ -454,7 +484,7 @@ export module ecs {
      */
     class AllOf extends BaseOf {
         public isMatch(entity: Entity): boolean {
-            return ((entity.componentFlag[0] & this.componentFlag[0]) === this.componentFlag[0]) && ((entity.componentFlag[1] & this.componentFlag[1]) === this.componentFlag[1]);
+            return this.mask.and(entity.mask);
         }
 
         getKey(): string {
@@ -463,39 +493,16 @@ export module ecs {
     }
 
     /**
-     * 用于描述只包含指定组件的逻辑
-     */
-    class OnlyOf extends BaseOf {
-
-        constructor(...args: number[]) {
-            super(...args);
-            let ctors = getComponentConstructors();
-            this.indices = new Array(ctors.length);
-            for(let i = 0, len = ctors.length; i < len; i++) {
-                this.indices[i] = ctors[i].tid;
-            }
-        }
-
-        public getKey(): string {
-            return 'onlyOf:' + this.toString();
-        }
-
-        public isMatch(entity: Entity): boolean {
-            return (entity.componentFlag[0] === this.componentFlag[0]) && (entity.componentFlag[1] === this.componentFlag[1]);
-        }
-    }
-
-    /**
      * 不包含所有这里面的组件（“与”关系）
      */
-    class NoneAllOf extends AnyOf {
+    class ExcludeOf extends BaseOf {
 
         public getKey(): string {
-            return 'noneAllOf:' + this.toString();
+            return 'excludeOf:' + this.toString();
         }
 
         public isMatch(entity: Entity): boolean {
-            return !super.isMatch(entity);
+            return !this.mask.or(entity.mask);
         }
     }
 
@@ -507,7 +514,7 @@ export module ecs {
 
     /**
      * 筛选规则间是“与”的关系
-     * 比如：ecs.Macher.allOf(...).noneAllOf(...)表达的是allOf && noneAllOf，即实体有“这些组件” 并且 “没有这些组件”
+     * 比如：ecs.Macher.allOf(...).excludeOf(...)表达的是allOf && excludeOf，即实体有“这些组件” 并且 “没有这些组件”
      */
     export class Matcher implements IMatcher {
 
@@ -543,8 +550,8 @@ export module ecs {
             return new Matcher().onlyOf(...args);
         }
 
-        public static noneAllOf(...args: ComponentConstructor<IComponent>[]) {
-            return new Matcher().noneAllOf(...args);
+        public static excludeOf(...args: ComponentConstructor<IComponent>[]) {
+            return new Matcher().excludeOf(...args);
         }
 
         /**
@@ -586,14 +593,14 @@ export module ecs {
                 newArgs.push(args[i].tid);
             }
             this.rules.push(new AllOf(...newArgs));
-            let ctors = getComponentConstructors();
+            let ctors = componentConstructors;
             let otherTids = [];
             for(let ctor of ctors) {
                 if(newArgs.indexOf(ctor.tid) < 0) {
                     otherTids.push(ctor.tid);
                 }
             }
-            this.rules.push(new NoneAllOf(...otherTids));
+            this.rules.push(new ExcludeOf(...otherTids));
             return this;
         }
 
@@ -601,12 +608,12 @@ export module ecs {
          * 表示不包含所有这里面的组件（“与”关系）。
          * @param args 
          */
-        public noneAllOf(...args: ComponentConstructor<IComponent>[]) {
+        public excludeOf(...args: ComponentConstructor<IComponent>[]) {
             let newArgs = [];
             for (let i = 0, len = args.length; i < len; i++) {
                 newArgs.push(args[i].tid);
             }
-            this.rules.push(new NoneAllOf(...newArgs));
+            this.rules.push(new ExcludeOf(...newArgs));
             return this;
         }
 
@@ -657,8 +664,8 @@ export module ecs {
             return new OrMatcher().onlyOf(...args);
         }
 
-        public static noneAllOf(...args: ComponentConstructor<IComponent>[]) {
-            return new OrMatcher().noneAllOf(...args);
+        public static excludeOf(...args: ComponentConstructor<IComponent>[]) {
+            return new OrMatcher().excludeOf(...args);
         }
         
         getKey(): string {
@@ -688,6 +695,30 @@ export module ecs {
                 return false;
             }
         }
+    }
+
+    //----------------------------------------------------------------------------------------------------
+    export interface ISystem {
+
+    }
+
+    //----------------------------------------------------------------------------------------------------
+    export interface IExecuteSystem extends ISystem {
+        readonly group: Group<Entity>;
+        init(): void;
+        execute(dt: number): void;
+    }
+    //----------------------------------------------------------------------------------------------------
+    export interface IReactiveSystem extends IExecuteSystem {
+
+    }
+    //----------------------------------------------------------------------------------------------------
+    export interface IRExecuteSystem extends IExecuteSystem {
+        readonly group: Group<Entity>;
+        readonly rGroup: Group<Entity>;
+
+        init(): void;
+        execute(dt: number): void;
     }
 
     /**
@@ -731,11 +762,8 @@ export module ecs {
         abstract update(entities: E[]): void;
     }
     /**
-     * 响应式的系统，每次执行完后都会移除当前收集的实体。
+     * 响应式的系统，如果收集到实体则只执行一次，每次执行完后都会移除当前收集的实体，直到再次收集到实体。
      * 
-     * 如果实体添加组件后需要在ReactiveSystem里面执行，在修改组件数据的时候需要使用replace**修改组件数据的方法。
-     * 
-     * 可实现只执行一次的系统。
      */
     export abstract class ReactiveSystem<E extends Entity> implements IReactiveSystem {
 
@@ -757,9 +785,6 @@ export module ecs {
 
         execute(dt: number): void {
             this.dt = dt;
-            /**
-             * 加个缓冲层，这样在当前帧中如果有实体删除了组件，不会影响到当前帧buffer中的实体
-             */
             this.update(this.group.matchEntities);
             this.group.clear();
         }
@@ -773,10 +798,11 @@ export module ecs {
     }
 
     /**
-     * 自动回收实体的ReactiveSystem，直接通过context.destroyEntity回收实体。
+     * 自动回收实体的ReactiveSystem。
      */
     export abstract class AutoDestroyEntityReactiveSystem<E extends Entity> extends ReactiveSystem<E> {
         execute(dt: null): void {
+            this.dt = dt;
             this.update(this.group.matchEntities);
             for(let e of this.group.matchEntities) {
                 e.destroy();
