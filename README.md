@@ -26,17 +26,17 @@ export EntityX extends AEntity {
 
 添加组件：
 ```
-entity.addComponent(HelloComponent); // 添加组件时会优先从组件缓存池中获取无用的组件对象，如果没有才会新创建一个组件对象
+entity.add(HelloComponent); // 添加组件时会优先从组件缓存池中获取无用的组件对象，如果没有才会新创建一个组件对象
 ```
 
 删除组件：
 ```
-entity.removeComponent(HelloComponent); // 组件对象会从实体身上移除并放入组件缓存池中
+entity.remove(HelloComponent); // 组件对象会从实体身上移除并放入组件缓存池中
 ```
 
 判断是否拥有组件：
 ```
-entity.hasComponent(HelloComponent);
+entity.has(HelloComponent);
 !!entity.Hello;
 ```
 
