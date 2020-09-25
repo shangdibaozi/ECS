@@ -1,28 +1,27 @@
 export module ecs {
     //#region 类型声明
     type ComponentConstructor<T> = {
-        tid: number;
-        compName : string;
+        /**
+         * 每类组件的唯一id
+         */
+        tid?: number;
+        /**
+         * 组件名称，可用作实体对象的属性名称。
+         */
+        compName?: string;
         new() : T;
     }
     type ComponentAddOrRemove = (entity: Entity) => void;
     //#endregion
 
-    export let context: Context<Entity> = null;
+    export let context: Context = null;
     /**
      * 组件可能是从组件缓存池中取出来的，这个时候组件中的数据是销毁前的数据，这可能会导致逻辑行为的不确定。
      * 所以在得到组件后要注意某些数据的初始化工作。
+     * 
+     * 组件里面只放数据可能在实际写代码的时候比较麻烦。如果是单纯对组件内的数据操作可以在组件里面写方法。
      */
-    export abstract class IComponent {
-        /**
-         * 每类组件的唯一id
-         */
-        static tid: number = -1;
-        /**
-         * 组件名称。用作实体对象属性的key。
-         */
-        static compName: string = null;
-    }
+    export interface IComponent { }
     
     /**
      * 组件类型id
@@ -38,7 +37,7 @@ export module ecs {
      */
     export function register(componentName: string) {
         return function (ctor: ComponentConstructor<IComponent>) {
-            if (ctor.tid === -1) {
+            if (ctor.tid == null) {
                 ctor.tid = compTid++;
                 ctor.compName = componentName;
                 componentConstructors.push(ctor);
@@ -53,8 +52,10 @@ export module ecs {
      * 为了增强实体的扩展性，实体的构造函数需要从外部传递进来。
      * @param eCtor 实体构造函数
      */
-    export function initContext<E extends Entity>(eCtor: { new(context: Context<E>): E }) {
-        context = new Context(eCtor, componentConstructors);
+    export function initContext() {
+        if(context == null) {
+            context = new Context();
+        }
     }
 
     /**
@@ -73,7 +74,22 @@ export module ecs {
         return context.createEntityWithComps(...ctors) as E;
     }
 
-    export class Context<E extends Entity> {
+    //#region 单例组件
+    let tid2comp: Map<number, IComponent> = new Map();
+    /**
+     * 获取单例组件
+     * @param ctor 组件类
+     */
+    export function getSinglton<T extends IComponent>(ctor: ComponentConstructor<T>) {
+        if(!tid2comp.has(ctor.tid)) {
+            let comp = createEntityWithComp(ctor);
+            tid2comp.set(ctor.tid, comp);
+        }
+        return tid2comp.get(ctor.tid) as T;
+    }
+    //#endregion
+
+    export class Context {
 
         /**
          * 组件缓存池
@@ -82,12 +98,12 @@ export module ecs {
         /**
          * 实体对象缓存池
          */
-        private entityPool: E[] = [];
+        private entityPool: Entity[] = [];
 
         /**
          * 通过实体id查找实体对象
          */
-        private eid2Entity: Map<number, E> = new Map();
+        private eid2Entity: Map<number, Entity> = new Map();
 
         /**
          * 当前Context下组件类型数量
@@ -103,12 +119,9 @@ export module ecs {
          */
         private readonly componentAddOrRemove: Array<Array<ComponentAddOrRemove>> = null;
 
-        private groups: Map<string, Group<E>> = new Map();
+        private groups: Map<string, Group> = new Map();
 
-        private entityConstructor: { new(context: Context<E>): E } = null;
-
-        constructor(eCtor: { new(context: Context<E>): E }, componentConstructors: ComponentConstructor<IComponent>[]) {
-            this.entityConstructor = eCtor;
+        constructor() {
             this.totalComponents = componentConstructors.length;
             this.componentTypes = componentConstructors;
 
@@ -127,9 +140,9 @@ export module ecs {
         /**
          * 为了管理到每一个创建的Entity，需要通过Context去创建。
          */
-        createEntity(): E {
-            let entity = this.entityPool.pop() || new this.entityConstructor(this);
-            entity.init(this);
+        createEntity<E extends Entity = Entity>(): E {
+            let entity = this.entityPool.pop() || new Entity();
+            entity.reset(this);
             this.eid2Entity.set(entity.eid, entity);
             return entity as E;
         }
@@ -147,12 +160,12 @@ export module ecs {
          * 指定多个组件创建实体，返回实体对象。
          * @param ctors 
          */
-        createEntityWithComps(...ctors: ComponentConstructor<IComponent>[]): E {
+        createEntityWithComps<E extends Entity = Entity>(...ctors: ComponentConstructor<IComponent>[]): E {
             let entity = this.createEntity();
             for(let ctor of ctors) {
                 entity.add(ctor);
             }
-            return entity;
+            return entity as E;
         }
 
         /**
@@ -161,7 +174,7 @@ export module ecs {
          * Context会缓存销毁的实体，下次新建实体时会优先从缓存中拿。
          * @param entity 
          */
-        destroyEntity(entity: E) {
+        destroyEntity(entity: Entity) {
             if (this.eid2Entity.has(entity.eid)) {
                 this.entityPool.push(entity);
                 this.eid2Entity.delete(entity.eid);
@@ -176,7 +189,7 @@ export module ecs {
          * @param matchCompTypeIds 
          * @param systemType e-表示ExecuteSystem，r-表示ReactiveSystem，c-表示在系统中自己手动调用createGroup创建的筛选规则
          */
-        createGroup(matcher: IMatcher, systemType: string = 'c'): Group<E> {
+        createGroup<E extends Entity = Entity>(matcher: IMatcher, systemType: string = 'c'): Group<E> {
             let key = `${systemType}_${matcher.getKey()}`;
             let group = this.groups.get(key);
             if (!group) {
@@ -187,7 +200,7 @@ export module ecs {
                     this.componentAddOrRemove[careComponentTypeIds[i]].push(group.onComponentAddOrRemove.bind(group));
                 }
             }
-            return group;
+            return group as Group<E>;
         }
 
         clear() {
@@ -220,8 +233,8 @@ export module ecs {
             }
         }
 
-        getEntityByEid(eid: number): E {
-            return this.eid2Entity.get(eid);
+        getEntityByEid<E extends Entity = Entity>(eid: number): E {
+            return this.eid2Entity.get(eid) as E;
         }
 
         activeEntityCount() {
@@ -291,13 +304,13 @@ export module ecs {
          */
         private compTid2Ctor: Map<number, ComponentConstructor<IComponent>> = new Map();
 
-        public context: Context<Entity>;
+        public context: Context;
 
         constructor() {
             this.eid = Entity.eid++;
         }
 
-        init(context: Context<Entity>) {
+        reset(context: Context) {
             this.context = context;
         }
 
@@ -371,7 +384,7 @@ export module ecs {
     }
     
 
-    export class Group<E extends Entity> {
+    export class Group<E extends Entity = Entity> {
         /**
          * 实体筛选规则
          */
@@ -704,7 +717,7 @@ export module ecs {
 
     //----------------------------------------------------------------------------------------------------
     export interface IExecuteSystem extends ISystem {
-        readonly group: Group<Entity>;
+        readonly group: Group;
         init(): void;
         execute(dt: number): void;
     }
@@ -714,8 +727,8 @@ export module ecs {
     }
     //----------------------------------------------------------------------------------------------------
     export interface IRExecuteSystem extends IExecuteSystem {
-        readonly group: Group<Entity>;
-        readonly rGroup: Group<Entity>;
+        readonly group: Group;
+        readonly rGroup: Group;
 
         init(): void;
         execute(dt: number): void;
@@ -724,21 +737,19 @@ export module ecs {
     /**
      * 每一帧都会去执行的系统
      */
-    export abstract class ExecuteSystem<E extends Entity> implements IExecuteSystem {
+    export abstract class ExecuteSystem<E extends Entity = Entity> implements IExecuteSystem {
 
         /**
          * 当前系统关心的组件
          */
         public readonly group: Group<E>;
-        protected context: Context<E> = null;
 
         /**
          * 帧时间
          */
         protected dt: number = 0;
 
-        constructor(context: Context<E>) {
-            this.context = context;
+        constructor() {
             this.group = context.createGroup(this.filter(), 'e');
         }
 
@@ -765,17 +776,15 @@ export module ecs {
      * 响应式的系统，如果收集到实体则只执行一次，每次执行完后都会移除当前收集的实体，直到再次收集到实体。
      * 
      */
-    export abstract class ReactiveSystem<E extends Entity> implements IReactiveSystem {
+    export abstract class ReactiveSystem<E extends Entity = Entity> implements IReactiveSystem {
 
         /**
          * 当前系统关心的组件
          */
         public readonly group: Group<E>;
-        protected context: Context<E> = null;
         protected dt: number = 0;
 
-        constructor(context: Context<E>) {
-            this.context = context;
+        constructor() {
             this.group = context.createGroup(this.filter(), 'r');
         }
 
@@ -800,10 +809,10 @@ export module ecs {
     /**
      * 自动回收实体的ReactiveSystem。
      */
-    export abstract class AutoDestroyEntityReactiveSystem<E extends Entity> extends ReactiveSystem<E> {
-        execute(dt: null): void {
+    export abstract class AutoDestroyEntityReactiveSystem<E extends Entity = Entity> extends ReactiveSystem<E> {
+        execute(dt: number): void {
             this.dt = dt;
-            this.update(this.group.matchEntities);
+            this.update(this.group.matchEntities as E[]);
             for(let e of this.group.matchEntities) {
                 e.destroy();
             }
@@ -814,15 +823,12 @@ export module ecs {
     /**
      * 结合ExecuteSystem和ReactiveSystem的特性，可以同时处理实体进入System的逻辑，和每帧的逻辑。
      */
-    export abstract class RExecuteSystem<E extends Entity> implements IRExecuteSystem {
-        public readonly group: Group<E>;
-        public readonly rGroup: Group<E>;
-
-        protected context: Context<E> = null;
+    export abstract class RExecuteSystem<E extends Entity = Entity> implements IRExecuteSystem {
+        public readonly group: Group;
+        public readonly rGroup: Group;
         protected dt: number = 0;
 
-        constructor(context: Context<E>) {
-            this.context = context;
+        constructor() {
             this.group = context.createGroup(this.filter(), 'e');
             this.rGroup = context.createGroup(this.filter(), 'r');
         }
@@ -835,11 +841,11 @@ export module ecs {
             this.dt = dt;
             // 处理刚进来的实体
             if(this.rGroup.count > 0) {
-                this.entityEnter(this.rGroup.matchEntities);
+                this.entityEnter(this.rGroup.matchEntities as E[]);
                 this.rGroup.clear();
             }
             // 
-            this.update(this.group.matchEntities);
+            this.update(this.group.matchEntities as E[]);
         }
         
         /**
@@ -861,10 +867,8 @@ export module ecs {
         private debugInfo: HTMLElement;
         private executeCount: {[key: string]: number} = null;
 
-        private context: ecs.Context<Entity>;
-
-        constructor(context: ecs.Context<Entity>) {
-            this.context = context;
+        constructor() {
+            
         }
 
         initDebug() {
@@ -927,7 +931,7 @@ export module ecs {
                 }
                 s += '</font>';
             }
-            s += `Active entity count: ${this.context.activeEntityCount()}`;
+            s += `Active entity count: ${context.activeEntityCount()}`;
             this.debugInfo.innerHTML = `<pre>${s}</pre>`;
         }
     }
