@@ -416,7 +416,7 @@ export module ecs {
          * 获取matchEntities中第一个实体
          */
         get entity(): E {
-            return this._entitiesCache[0];
+            return this.matchEntities[0];
         }
 
         constructor(matcher: IMatcher) {
