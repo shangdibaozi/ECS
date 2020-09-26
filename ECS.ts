@@ -231,6 +231,10 @@ export module ecs {
             for (let i = events.length - 1; i >= 0; i--) {
                 events[i](entity);
             }
+            // 判断是不是删了单例组件
+            if(tid2comp.has(componentTypeId)) {
+                tid2comp.delete(componentTypeId);
+            }
         }
 
         getEntityByEid<E extends Entity = Entity>(eid: number): E {
@@ -368,9 +372,6 @@ export module ecs {
          * 销毁实体，实体会被回收到实体缓存池中。
          */
         destroy() {
-            let idx = 0;
-            let offset = 0;
-            
             for(let ctor of this.compTid2Ctor.values()) {
                 this.mask.delete(ctor.tid);
                 this.context.broadcastComponentAddOrRemove(this, ctor.tid);
