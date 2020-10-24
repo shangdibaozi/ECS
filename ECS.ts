@@ -14,7 +14,7 @@ export module ecs {
     type ComponentAddOrRemove = (entity: Entity) => void;
     //#endregion
 
-    export let context: Context = null;
+    let context: Context = null;
     /**
      * 组件可能是从组件缓存池中取出来的，这个时候组件中的数据是销毁前的数据，这可能会导致逻辑行为的不确定。
      * 所以在得到组件后要注意某些数据的初始化工作。
@@ -58,6 +58,10 @@ export module ecs {
         }
     }
 
+    export function createEntity<T extends Entity>(): T {
+        return context.createEntity();
+    }
+
     /**
      * 指定一个组件创建实体，返回组件对象。
      * @param ctor 
@@ -72,6 +76,48 @@ export module ecs {
      */
     export function createEntityWithComps<E extends Entity>(...ctors: ComponentConstructor<IComponent>[]): E {
         return context.createEntityWithComps(...ctors) as E;
+    }
+
+    /**
+     * 根据实体id获得实体对象
+     * @param eid 实体id
+     */
+    export function getEntityByEid<E extends Entity = Entity>(eid: number): E {
+        return context.eid2Entity.get(eid) as E;
+    }
+
+    /**
+     * 创建实体筛选器
+     * @param matcher 
+     * @param systemType 
+     */
+    export function createGroup<E extends Entity = Entity>(matcher: IMatcher, systemType: string = 'c'): Group<E> {
+        return context.createGroup(matcher, systemType);
+    }
+
+    export function clear() {
+        context.clear();
+    }
+
+    /**
+     * 表示只关心这些组件的添加和删除动作。虽然实体可能有这些组件之外的组件，但是它们的添加和删除没有被关注，所以不会存在对关注之外的组件
+     * 进行添加操作引发Group重复添加实体。
+     * @param args 
+     */
+    export function allOf(...args: ComponentConstructor<IComponent>[]) {
+        return new Matcher().allOf(...args);
+    }
+
+    export function anyOf(...args: ComponentConstructor<IComponent>[]) {
+        return new Matcher().anyOf(...args);
+    }
+
+    export function onlyOf(...args: ComponentConstructor<IComponent>[]) {
+        return new Matcher().onlyOf(...args);
+    }
+
+    export function excludeOf(...args: ComponentConstructor<IComponent>[]) {
+        return new Matcher().excludeOf(...args);
     }
 
     //#region 单例组件
@@ -103,7 +149,7 @@ export module ecs {
         /**
          * 通过实体id查找实体对象
          */
-        private eid2Entity: Map<number, Entity> = new Map();
+        public eid2Entity: Map<number, Entity> = new Map();
 
         /**
          * 当前Context下组件类型数量
@@ -545,27 +591,6 @@ export module ecs {
                 });
             }
             return this._indices;
-        }
-
-        /**
-         * 表示只关心这些组件的添加和删除动作。虽然实体可能有这些组件之外的组件，但是它们的添加和删除没有被关注，所以不会存在对关注之外的组件
-         * 进行添加操作引发Group重复添加实体。
-         * @param args 
-         */
-        public static allOf(...args: ComponentConstructor<IComponent>[]) {
-            return new Matcher().allOf(...args);
-        }
-
-        public static anyOf(...args: ComponentConstructor<IComponent>[]) {
-            return new Matcher().anyOf(...args);
-        }
-
-        public static onlyOf(...args: ComponentConstructor<IComponent>[]) {
-            return new Matcher().onlyOf(...args);
-        }
-
-        public static excludeOf(...args: ComponentConstructor<IComponent>[]) {
-            return new Matcher().excludeOf(...args);
         }
 
         /**
