@@ -58,13 +58,12 @@ entity.destroy() // 销毁实体时会先删除实体身上的所有组件，然
 - anyOf: 用来描述包含任意一个这些组件的实体；
 - allOf: 用来描述同时包含了这些组件的实体；
 - onlyOf: 用来描述只包含了这些组件的实体；不是特殊情况不建议使用onlyOf，因为onlyOf会监听所有组件的添加和删除事件；
-- noneAllOf: 用来描述不同时包含这些组件的实体；
+- excludeOf: 表示不包含所有这里面的组件（“与”关系）；
 
 使用方式：
 ```
 ecs.allOf(HelloComponent);
 ecs.onlyOf(HelloComponent);
-ecs.anyOf(HelloComponent).noneAllOf(Test1Component, Test2Component);
 ```
 
 ## 系统
@@ -162,6 +161,16 @@ export class GameControllerBehaviour extends cc.Component {
 }
 
 ```
+
+# 调试
+添加如下代码
+```
+windows['ecs'] = ecs;
+```
+在chrome浏览器的console中输入ecs可看到
+![](./imgs/ecs_debug.png)
+其中红框内为ecs上下文数据。
+
 
 # Samples
 https://github.com/shangdibaozi/ecs_start
