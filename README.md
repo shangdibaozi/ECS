@@ -62,9 +62,9 @@ entity.destroy() // 销毁实体时会先删除实体身上的所有组件，然
 
 使用方式：
 ```
-ecs.Matcher.allOf(HelloComponent);
-ecs.Matcher.onlyOf(HelloComponent);
-ecs.Matcher.anyOf(HelloComponent).noneAllOf(Test1Component, Test2Component);
+ecs.allOf(HelloComponent);
+ecs.onlyOf(HelloComponent);
+ecs.anyOf(HelloComponent).noneAllOf(Test1Component, Test2Component);
 ```
 
 ## 系统
@@ -108,7 +108,7 @@ export class RoomSystem extends ecs.RootSystem {
 export class MoveSystem extends ecs.RExecuteSystem {
 
     filter(): ecs.Matcher {
-        return ecs.Matcher.allOf(NodeComponent, VelocityComponent);
+        return ecs.allOf(NodeComponent, VelocityComponent);
     }
 
     // 实体第一次进入MoveSystem会进入此方法
@@ -132,7 +132,7 @@ export class MoveSystem extends ecs.RExecuteSystem {
 
 export class JumpSystem extends ecs.AutoDestroyEntityReactiveSystem {
     filter(): ecs.Matcher {
-        return ecs.Matcher.allOf(NodeComponent, JumpComponent);
+        return ecs.allOf(NodeComponent, JumpComponent);
     }
     // 执行一次后，所有实体会自动被回收
     update(entities: ecs.Entity[]) {
