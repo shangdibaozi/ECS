@@ -147,16 +147,27 @@ export class JumpSystem extends ecs.AutoDestroyEntityReactiveSystem {
 const { ccclass, property } = cc._decorator;
 @ccclass
 export class GameControllerBehaviour extends cc.Component {
+    @property
+    isDebugEcs: boolean = true;
+
     rootSystem: RootSystem = null;
 
     onLoad() {
-        ecs.initContext();
         this.rootSystem = new RootSystem();
         this.rootSystem.init();
+
+        if(this.isDebugEcs) {
+            this.rootSystem.initDebug();
+        }
     }
 
     update(dt: number) {
-        this.rootSystem.execute(dt);
+        if(this.isDebugEcs) {
+            this.rootSystem.debugExecute(dt);
+        }
+        else {
+            this.rootSystem.execute(dt);
+        }
     }
 }
 
