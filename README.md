@@ -104,23 +104,24 @@ export class RoomSystem extends ecs.RootSystem {
     }
 }
 
-export class MoveSystem extends ecs.RExecuteSystem {
+export class MoveSystem extends ecs.RExecuteSystem<EntityX> {
 
     filter(): ecs.Matcher {
         return ecs.allOf(NodeComponent, VelocityComponent);
     }
 
     // 实体第一次进入MoveSystem会进入此方法
-    entityEnter(entities: ecs.Entity[]) {
+    entityEnter(entities: EntityX[]) {
         for(e of entities) {
-            e.get(VelocityComponent).length = 20;
+            // e.get(VelocityComponent).length = 20;
+            e.Velocity.length = 20;
         }
     }
     // 每帧都会更新
-    update(entities: ecs.Entity[]) {
+    update(entities: EntityX[]) {
         for(let e of entities) {
-            let moveComp = e.get(MoveComponent);
-            lel node = e.get(NodeComponent).val;
+            let moveComp = e.Move; // e.get(MoveComponent);
+            lel node = e.Node.val; //e.get(NodeComponent).val;
 
             let dtS = moveComp.heading.mul(moveComp.length * this.dt);
             this.node.x += dtS.x;
