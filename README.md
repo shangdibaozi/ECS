@@ -4,7 +4,7 @@
 # 使用说明
 ## 组件
 组件必须实现ecs.IComponent，并且需要使用ecs.register注册组件。
-```
+```TypeScript
 @ecs.register('Hello')
 export class HelloComponent implements ecs.IComponent {
     data: number;
@@ -14,7 +14,7 @@ ecs.register组件填入的参数是方便通过```entity.Hello```获得组件�
 
 ## 实体
 为了能利用Typescript的类型提示机制，在使用实体的时候需要用户自己继承ecs.Entity。
-```
+```TypeScript
 class AEntity extends ecs.Entity {
     Hello: HelloComponent; // 这里的Hello要和ecs.register中填入的参数一致
 }
@@ -25,31 +25,31 @@ export EntityX extends AEntity {
 ```
 
 添加组件：
-```
+```TypeScript
 entity.add(HelloComponent); // 添加组件时会优先从组件缓存池中获取无用的组件对象，如果没有才会新创建一个组件对象
 ```
 
 删除组件：
-```
+```TypeScript
 entity.remove(HelloComponent); // 组件对象会从实体身上移除并放入组件缓存池中
 ```
 
 获得组件对象：
-```
+```TypeScript
 1、entity.Hello; // 见上方自定义实体操作
 
 2、entity.get(HelloComponent);
 ```
 
 判断是否拥有组件：
-```
+```TypeScript
 1、entity.has(HelloComponent);
 
 2、!!entity.Hello;
 ```
 
 销毁实体：
-```
+```TypeScript
 entity.destroy() // 销毁实体时会先删除实体身上的所有组件，然后将实体放入实体缓存池中
 ```
 
@@ -61,7 +61,7 @@ entity.destroy() // 销毁实体时会先删除实体身上的所有组件，然
 - excludeOf: 表示不包含所有这里面的组件（“与”关系）；
 
 使用方式：
-```
+```TypeScript
 ecs.allOf(HelloComponent);
 ecs.onlyOf(HelloComponent);
 ```
@@ -76,7 +76,7 @@ ecs.onlyOf(HelloComponent);
 
 # 怎么使用
 1、声明组件
-```
+```TypeScript
 @ecs.register('Node')
 export class NodeComponent implements ecs.IComponent {
     val: cc.Node = null;
@@ -95,7 +95,7 @@ export class JumpComponent implements ecs.IComponent {
 ```
 
 2、创建系统
-```
+```TypeScript
 export class RoomSystem extends ecs.RootSystem {
     constructor() {
         super();
@@ -144,7 +144,7 @@ export class JumpSystem extends ecs.AutoDestroyEntityReactiveSystem {
 ```
 
 3、驱动ecs框架
-```
+```TypeScript
 const { ccclass, property } = cc._decorator;
 @ccclass
 export class GameControllerBehaviour extends cc.Component {
@@ -176,7 +176,7 @@ export class GameControllerBehaviour extends cc.Component {
 
 # 调试
 添加如下代码
-```
+```TypeScript
 windows['ecs'] = ecs;
 ```
 在chrome浏览器的console中输入ecs可看到
