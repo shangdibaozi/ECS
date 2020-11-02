@@ -1,6 +1,6 @@
 export module ecs {
     //#region 类型声明
-    type ComponentConstructor<T> = {
+    type ComponentConstructor<T extends IComponent = IComponent> = {
         /**
          * 每类组件的唯一id
          */
@@ -21,7 +21,12 @@ export module ecs {
      * 
      * 组件里面只放数据可能在实际写代码的时候比较麻烦。如果是单纯对组件内的数据操作可以在组件里面写方法。
      */
-    export interface IComponent { }
+    export interface IComponent {
+        /**
+         * 拥有该组件的实体id
+         */
+        eid: number;
+    }
 
     /**
      * 组件类型id
@@ -30,13 +35,13 @@ export module ecs {
     /**
      * 组件构造函数
      */
-    let componentConstructors: ComponentConstructor<IComponent>[] = [];
+    let componentConstructors: ComponentConstructor[] = [];
     /**
      * 由于js打包会改变类名，所以这里必须手动传入组件的名称。
      * @param componentName 
      */
     export function register(componentName: string) {
-        return function (ctor: ComponentConstructor<IComponent>) {
+        return function (ctor: ComponentConstructor) {
             if (ctor.tid == null) {
                 ctor.tid = compTid++;
                 ctor.compName = componentName;
@@ -75,17 +80,23 @@ export module ecs {
     let groups: Map<string, Group> = new Map();
 
     /**
+     * 实体自增id
+     */
+    let eid = 1;
+
+    /**
      * 创建实体
      */
     export function createEntity<E extends Entity = Entity>(): E {
         let entity = entityPool.pop() || new Entity();
+        entity.eid = eid++;
         eid2Entity.set(entity.eid, entity);
         return entity as E;
     }
 
     /**
      * 创建组件对象
-     * @param ctor 
+     * @param ctor
      */
     function createComponent<T extends IComponent>(ctor: ComponentConstructor<T>): T {
         let component = componentPools[ctor.tid].pop() || new componentConstructors[ctor.tid];
@@ -222,7 +233,10 @@ export module ecs {
     }
 
     /**
-     * 表示不包含所有这里面的组件（“与”关系）。
+     * 不包含指定的任意一个组件
+     * 
+     * eg.
+     *  ecs.excludeOf(A, B);表示不包含组件A或者组件B
      * @param args 
      */
     export function excludeOf(...args: ComponentConstructor<IComponent>[]) {
@@ -255,19 +269,22 @@ export module ecs {
         }
 
         set(num: number) {
-            this.mask[((num / 32) >>> 0)] |= (1 << (num % 32));
+            // https://stackoverflow.com/questions/34896909/is-it-correct-to-set-bit-31-in-javascript
+            // this.mask[((num / 32) >>> 0)] |= ((1 << (num % 32)) >>> 0);
+            this.mask[((num / 31) >>> 0)] |= (1 << (num % 31));
         }
 
         delete(num: number) {
-            this.mask[((num / 32) >>> 0)] &= ~(1 << (num % 32));
+            this.mask[((num / 31) >>> 0)] &= ~(1 << (num % 31));
         }
 
         has(num: number) {
-            return !!(this.mask[((num / 32) >>> 0)] & (1 << (num % 32)));
+            return !!(this.mask[((num / 31) >>> 0)] & (1 << (num % 31)));
         }
 
         or(other: Mask) {
             for (let i = 0; i < this.size; i++) {
+                // &操作符最大也只能对2^30进行操作，如果对2^31&2^31会得到负数。当然可以(2^31&2^31) >>> 0，这样多了一步右移操作。
                 if (this.mask[i] & other.mask[i]) {
                     return true;
                 }
@@ -291,15 +308,12 @@ export module ecs {
         }
     }
 
-    /**
-     * 实体自增id
-     */
-    let eid = 1;
+    
     export class Entity {
         /**
-         * 实体唯一标识
+         * 实体唯一标识，不要手动修改。
          */
-        public readonly eid: number = -1;
+        public eid: number = -1;
 
         public mask = new Mask();
 
@@ -308,9 +322,7 @@ export module ecs {
          */
         private compTid2Ctor: Map<number, ComponentConstructor<IComponent>> = new Map();
 
-        constructor() {
-            this.eid = eid++;
-        }
+        constructor() {}
 
         /**
          * 根据组件id动态创建组件，并通知关心的系统。
@@ -372,7 +384,6 @@ export module ecs {
             destroyEntity(this);
         }
     }
-
 
     export class Group<E extends Entity = Entity> {
         /**
@@ -496,7 +507,7 @@ export module ecs {
     }
 
     /**
-     * 不包含所有这里面的组件（“与”关系）
+     * 不包含指定的任意一个组件
      */
     class ExcludeOf extends BaseOf {
 
@@ -586,7 +597,7 @@ export module ecs {
         }
 
         /**
-         * 表示不包含所有这里面的组件（“与”关系）。
+         * 不包含指定的任意一个组件
          * @param args 
          */
         public excludeOf(...args: ComponentConstructor<IComponent>[]) {

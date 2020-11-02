@@ -7,10 +7,11 @@
 ```TypeScript
 @ecs.register('Hello')
 export class HelloComponent implements ecs.IComponent {
+    eid: number;
     data: number;
 }
 ```
-ecs.register组件填入的参数是方便通过```entity.Hello```获得组件对象。ecs.register还会将组件的构造函数存入```ecs.Context```中，并且给该类组件分配一个组件id。
+ecs.register组件填入的参数是方便通过```entity.Hello```获得组件对象。ecs.register还会将组件的构造函数存入ecs上下文中，并且给该类组件分配一个组件id。
 
 ## 实体
 为了能利用Typescript的类型提示机制，在使用实体的时候需要用户自己继承ecs.Entity。
@@ -61,9 +62,22 @@ entity.destroy() // 销毁实体时会先删除实体身上的所有组件，然
 - excludeOf: 表示不包含所有这里面的组件（“与”关系）；
 
 使用方式：
+
+- 表示同时拥有多个组件
 ```TypeScript
-ecs.allOf(HelloComponent);
-ecs.onlyOf(HelloComponent);
+ecs.allOf(AComponent, BComponent, CComponent);
+```
+- 表示拥有任意一个组件
+```Typescript
+ecs.anyOf(AComponent, BComponent);
+```
+- 表示拥有某些组件，并且不包含某些组件
+```Typescript
+// 不包含CComponent或者DComponent
+ecs.allOf(AComponent, BComponent).excludeOf(CComponent, DComponent);
+
+// 不同时包含CComponent和DComponent
+ecs.allOf(AComponent, BComponent).excludeOf(CComponent).excludeOf(DComponent);
 ```
 
 ## 系统
