@@ -344,7 +344,7 @@ export module ecs {
             let component = createComponent(ctor);
             // 将组件对象直接附加到实体对象身上，方便直接获取。
             this[ctor.compName] = component;
-
+            component.eid = this.eid;
             this.compTid2Ctor.set(componentTypeId, ctor);
             // 广播实体添加组件的消息
             broadcastComponentAddOrRemove(this, componentTypeId);
@@ -363,6 +363,7 @@ export module ecs {
             let componentTypeId = ctor.tid;
             if (this.mask.has(componentTypeId)) {
                 componentPools[componentTypeId].push(this[ctor.compName]);
+                (this[ctor.compName] as IComponent).eid = -1;
                 this[ctor.compName] = null;
                 this.mask.delete(componentTypeId);
                 broadcastComponentAddOrRemove(this, componentTypeId);
@@ -377,6 +378,7 @@ export module ecs {
             for (let ctor of this.compTid2Ctor.values()) {
                 this.mask.delete(ctor.tid);
                 broadcastComponentAddOrRemove(this, ctor.tid);
+                (this[ctor.compName] as IComponent).eid = -1;
                 this[ctor.compName] = null;
             }
             this.compTid2Ctor.clear();
