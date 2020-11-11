@@ -16,16 +16,13 @@ export module ecs {
 
     //#region 注册组件
     /**
-     * 组件可能是从组件缓存池中取出来的，这个时候组件中的数据是销毁前的数据，这可能会导致逻辑行为的不确定。
-     * 所以在得到组件后要注意某些数据的初始化工作。
-     * 
      * 组件里面只放数据可能在实际写代码的时候比较麻烦。如果是单纯对组件内的数据操作可以在组件里面写方法。
      */
     export interface IComponent {
         /**
-         * 拥有该组件的实体id
+         * 组件数据重置
          */
-        eid: number;
+        reset(): void;
     }
 
     /**
@@ -163,11 +160,11 @@ export module ecs {
      * 清理所有的实体
      */
     export function clear() {
-        groups.forEach((group) => {
-            group.clear();
-        });
         eid2Entity.forEach((entity) => {
             entity.destroy();
+        });
+        groups.forEach((group) => {
+            group.clear();
         });
     }
 
@@ -307,8 +304,6 @@ export module ecs {
             }
         }
     }
-
-    
     export class Entity {
         /**
          * 实体唯一标识，不要手动修改。
@@ -344,7 +339,6 @@ export module ecs {
             let component = createComponent(ctor);
             // 将组件对象直接附加到实体对象身上，方便直接获取。
             this[ctor.compName] = component;
-            component.eid = this.eid;
             this.compTid2Ctor.set(componentTypeId, ctor);
             // 广播实体添加组件的消息
             broadcastComponentAddOrRemove(this, componentTypeId);
@@ -362,8 +356,8 @@ export module ecs {
         remove<T extends IComponent>(ctor: ComponentConstructor<T>) {
             let componentTypeId = ctor.tid;
             if (this.mask.has(componentTypeId)) {
+                (this[ctor.compName] as IComponent).reset();
                 componentPools[componentTypeId].push(this[ctor.compName]);
-                (this[ctor.compName] as IComponent).eid = -1;
                 this[ctor.compName] = null;
                 this.mask.delete(componentTypeId);
                 broadcastComponentAddOrRemove(this, componentTypeId);
@@ -376,9 +370,10 @@ export module ecs {
          */
         destroy() {
             for (let ctor of this.compTid2Ctor.values()) {
+                (this[ctor.compName] as IComponent).reset();
+                componentPools[ctor.tid].push(this[ctor.compName]);
                 this.mask.delete(ctor.tid);
                 broadcastComponentAddOrRemove(this, ctor.tid);
-                (this[ctor.compName] as IComponent).eid = -1;
                 this[ctor.compName] = null;
             }
             this.compTid2Ctor.clear();
