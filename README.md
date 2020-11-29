@@ -200,3 +200,53 @@ windows['ecs'] = ecs;
 
 # Samples
 https://github.com/shangdibaozi/ecs_start
+
+# System使用
+
+## ecs.EventSystem
+ecs.EventSystem是一个支持事件的System。
+
+使用方式：
+
+```
+// 普通组件
+@ecs.register('Test')
+export class TestComponent extends ecs.IComponent {
+    reset() {
+
+    }
+}
+
+// 事件组件
+@ecs.register('Event')
+export class EventComponent extends ecs.IComponent {
+
+    reset() {
+
+    }
+}
+
+export class TestEventSystem extends ecs.EventSystem {
+    filter(): ecs.IMatcher {
+        return ecs.allOf(TestComponent);
+    }
+
+    // 事件过滤
+    event(): ecs.IMatcher {
+        return ecs.allOf(EventComponent);
+    }
+
+    update(entities: ecs.Entity[]) {
+
+    }
+
+    // 当有绑定事件组件的实体创建时，在轮到当前系统运行时会先执行这里的方法。
+    // eventEntities里面是所有通过事件过滤的实体，entities是执行update时的实体
+    eventCallback(eventEntities: ecs.Entity[], entities: ecs.Entity[]) {
+
+    }
+}
+
+// 触发事件
+ecs.createEntityWithComp(EventComponent);
+```
