@@ -6,9 +6,15 @@
 组件必须实现ecs.IComponent，并且需要使用ecs.register注册组件。
 ```TypeScript
 @ecs.register('Hello')
-export class HelloComponent implements ecs.IComponent {
+export class HelloComponent extends ecs.IComponent {
     eid: number;
     data: number;
+
+    // 组件被回收前会调用这个方法。
+    reset() {
+        this.edi = 0;
+        this.data = 0;
+    }
 }
 ```
 ecs.register组件填入的参数是方便通过```entity.Hello```获得组件对象。ecs.register还会将组件的构造函数存入ecs上下文中，并且给该类组件分配一个组件id。
@@ -92,19 +98,33 @@ ecs.allOf(AComponent, BComponent).excludeOf(CComponent).excludeOf(DComponent);
 1、声明组件
 ```TypeScript
 @ecs.register('Node')
-export class NodeComponent implements ecs.IComponent {
+export class NodeComponent extends ecs.IComponent {
     val: cc.Node = null;
+
+    reset() {
+        this.val = null;
+    }
 }
 
 @ecs.reigster('Velocity')
-export class VelocityComponent implements ecs.IComponent {
+export class VelocityComponent extends ecs.IComponent {
     heading: cc.Vec2 = cc.v2();
     length: number = 0;
+
+    reset() {
+        this.heading.x = 0;
+        this.heading.y = 0;
+        this.length = 0;
+    }
 }
 
 @ecs.register('Jump')
-export class JumpComponent implements ecs.IComponent {
+export class JumpComponent extends ecs.IComponent {
     height: number = 10;
+
+    reset() {
+
+    }
 }
 ```
 
@@ -208,7 +228,7 @@ ecs.EventSystem是一个支持事件的System。
 
 使用方式：
 
-```
+```Typescript
 // 普通组件
 @ecs.register('Test')
 export class TestComponent extends ecs.IComponent {
