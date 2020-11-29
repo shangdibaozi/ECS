@@ -18,11 +18,15 @@ export module ecs {
     /**
      * 组件里面只放数据可能在实际写代码的时候比较麻烦。如果是单纯对组件内的数据操作可以在组件里面写方法。
      */
-    export interface IComponent {
+    export abstract class IComponent {
         /**
-         * 组件数据重置
+         * 组件所在的实体对象
          */
-        reset(): void;
+        ent: ecs.Entity;
+        /**
+         * 组件被回收时会调用这个接口。可以在这里重置数据，或者解除引用。
+         */
+        abstract reset(): void;
     }
 
     /**
@@ -137,12 +141,14 @@ export module ecs {
         }
     }
 
+    
+    type SystemType = 'c' | 'e' | 'r';
     /**
      * 创建group，每个group只关心对应组件的添加和删除
      * @param matchCompTypeIds 
      * @param systemType e-表示ExecuteSystem，r-表示ReactiveSystem，c-表示在系统中自己手动调用createGroup创建的筛选规则
      */
-    export function createGroup<E extends Entity = Entity>(matcher: IMatcher, systemType: string = 'c'): Group<E> {
+    export function createGroup<E extends Entity = Entity>(matcher: IMatcher, systemType: SystemType = 'c'): Group<E> {
         let key = `${systemType}_${matcher.getKey()}`;
         let group = groups.get(key);
         if (!group) {
@@ -342,6 +348,9 @@ export module ecs {
             this.compTid2Ctor.set(componentTypeId, ctor);
             // 广播实体添加组件的消息
             broadcastComponentAddOrRemove(this, componentTypeId);
+
+            component.ent = this;
+
             return component;
         }
 
@@ -357,6 +366,7 @@ export module ecs {
             let componentTypeId = ctor.tid;
             if (this.mask.has(componentTypeId)) {
                 (this[ctor.compName] as IComponent).reset();
+                (this[ctor.compName] as IComponent).ent = null;
                 componentPools[componentTypeId].push(this[ctor.compName]);
                 this[ctor.compName] = null;
                 this.mask.delete(componentTypeId);
@@ -371,6 +381,7 @@ export module ecs {
         destroy() {
             for (let ctor of this.compTid2Ctor.values()) {
                 (this[ctor.compName] as IComponent).reset();
+                (this[ctor.compName] as IComponent).ent = null;
                 componentPools[ctor.tid].push(this[ctor.compName]);
                 this.mask.delete(ctor.tid);
                 broadcastComponentAddOrRemove(this, ctor.tid);
@@ -641,21 +652,13 @@ export module ecs {
     }
 
     export interface IExecuteSystem extends ISystem {
-        readonly group: Group;
+        canRun(): boolean;
         init(): void;
         execute(dt: number): void;
     }
     
     export interface IReactiveSystem extends IExecuteSystem {
 
-    }
-    
-    export interface IRExecuteSystem extends IExecuteSystem {
-        readonly group: Group;
-        readonly rGroup: Group;
-
-        init(): void;
-        execute(dt: number): void;
     }
 
     /**
@@ -666,7 +669,7 @@ export module ecs {
         /**
          * 当前系统关心的组件
          */
-        public readonly group: Group<E>;
+        protected readonly group: Group<E>;
 
         /**
          * 帧时间
@@ -682,6 +685,10 @@ export module ecs {
          */
         init(): void {
 
+        }
+
+        canRun() {
+            return this.group.count > 0;
         }
 
         execute(dt: number): void {
@@ -705,7 +712,7 @@ export module ecs {
         /**
          * 当前系统关心的组件
          */
-        public readonly group: Group<E>;
+        protected readonly group: Group<E>;
         protected dt: number = 0;
 
         constructor() {
@@ -714,6 +721,10 @@ export module ecs {
 
         init() {
 
+        }
+
+        canRun() {
+            return this.group.count > 0;
         }
 
         execute(dt: number): void {
@@ -747,9 +758,9 @@ export module ecs {
     /**
      * 结合ExecuteSystem和ReactiveSystem的特性，可以同时处理实体进入System的逻辑，和每帧的逻辑。
      */
-    export abstract class RExecuteSystem<E extends Entity = Entity> implements IRExecuteSystem {
-        public readonly group: Group;
-        public readonly rGroup: Group;
+    export abstract class RExecuteSystem<E extends Entity = Entity> implements IExecuteSystem {
+        protected readonly group: Group;
+        protected readonly rGroup: Group;
         protected dt: number = 0;
 
         constructor() {
@@ -759,6 +770,10 @@ export module ecs {
 
         init(): void {
 
+        }
+
+        canRun() {
+            return this.group.count > 0;
         }
 
         execute(dt: number): void {
@@ -780,6 +795,50 @@ export module ecs {
         abstract filter(): IMatcher;
         abstract entityEnter(entities: E[]): void;
         abstract update(entities: E[]): void;
+    }
+
+    export abstract class EventSystem<E extends Entity = Entity> implements IExecuteSystem {
+        protected readonly group: Group;
+        protected readonly eGroup: Group;
+        protected dt: number = 0;
+
+        constructor() {
+            this.group = createGroup(this.filter(), 'e');
+            this.eGroup = createGroup(this.event(), 'r');
+        }
+
+        init(): void {
+
+        }
+
+        canRun() {
+            return this.group.count > 0 || this.eGroup.count > 0;
+        }
+
+        execute(dt: number): void {
+            this.dt = dt;
+            // 处理事件实体
+            if (this.eGroup.count > 0) {
+                this.eventCallback(this.eGroup.matchEntities as E[], this.group.matchEntities as E[]);
+                for(let e of this.eGroup.matchEntities) {
+                    e.destroy();
+                }
+            }
+            // 有可能事件回调中删除了全部实体
+            if(this.group.count > 0) {
+                this.update(this.group.matchEntities as E[]);
+            }
+        }
+
+        /**
+         * 实体过滤规则
+         * 
+         * 根据提供的组件过滤实体。
+         */
+        abstract filter(): IMatcher;
+        abstract event(): IMatcher;
+        abstract update(entities: E[]): void;
+        abstract eventCallback(eventEntities: E[], entities: E[]): void;
     }
 
     /**
@@ -828,7 +887,7 @@ export module ecs {
 
         execute(dt: number) {
             for (let sys of this.executeSystemFlows) {
-                if (sys.group.count > 0) { // 与System关联的Group如果没有实体，则不去执行这个System。
+                if (sys.canRun()) { // 与System关联的Group如果没有实体，则不去执行这个System。
                     sys.execute(dt);
                 }
             }
@@ -839,19 +898,19 @@ export module ecs {
             for (let sys of this.executeSystemFlows) {
                 let sysName = sys['__proto__'].constructor.name;
                 let startTime = Date.now();
-                if (sys.group.count > 0) { // 与System关联的Group如果没有实体，则不去执行这个System。
+                if (sys.canRun()) { // 与System关联的Group如果没有实体，则不去执行这个System。
                     sys.execute(dt);
                     this.executeCount[sysName]++;
                 }
 
                 let endTime = Date.now();
-                let color = sys.group.count === 0 ? 'white' : 'green'
+                let color = sys.canRun() ? 'white' : 'green'
                 s += `<font size="1" color="${color}">${sysName}: ${endTime - startTime} ms\n`;
                 if (sys instanceof ReactiveSystem) {
                     s += `  |_execute count: ${this.executeCount[sysName]}\n`;
                 }
-                if (sys.group.count > 0) {
-                    s += `  |_entity count: ${sys.group.count}\n`;
+                if (sys.canRun()) {
+                    s += `  |_entity count: ${sys['group'].count}\n`;
                 }
                 s += '</font>';
             }
