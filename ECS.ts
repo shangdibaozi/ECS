@@ -815,14 +815,19 @@ export module ecs {
             return this.group.count > 0 || this.eGroup.count > 0;
         }
 
+        clearEventEntities() {
+            if(this.eGroup.count > 0) {
+                for(let e of this.eGroup.matchEntities) {
+                    e.destroy();
+                }
+            }
+        }
+
         execute(dt: number): void {
             this.dt = dt;
             // 处理事件实体
             if (this.eGroup.count > 0) {
                 this.eventCallback(this.eGroup.matchEntities as E[], this.group.matchEntities as E[]);
-                for(let e of this.eGroup.matchEntities) {
-                    e.destroy();
-                }
             }
             // 有可能事件回调中删除了全部实体
             if(this.group.count > 0) {
@@ -846,6 +851,8 @@ export module ecs {
      */
     export class RootSystem implements ISystem {
         private executeSystemFlows: IExecuteSystem[] = [];
+        private eventSystems: EventSystem[] = [];
+        private eventSystemsCnt: number = 0;
 
         private debugInfo: HTMLElement;
         private executeCount: { [key: string]: number } = null;
@@ -871,7 +878,17 @@ export module ecs {
         add(system: ISystem) {
             if (system instanceof System) { // 将嵌套的System都“摊平”，放在根System中进行遍历，减少execute的频繁进入退出。
                 Array.prototype.push.apply(this.executeSystemFlows, system.executeSystems);
+                system.executeSystems.forEach(sys => {
+                    if(sys instanceof EventSystem) {
+                        this.eventSystems.push(sys);
+                        this.eventSystemsCnt++;
+                    }
+                });
                 system.executeSystems.length = 0;
+            }
+            else if(system instanceof EventSystem) {
+                this.eventSystems.push(system);
+                this.eventSystemsCnt++;
             }
             else {
                 this.executeSystemFlows.push(system as IExecuteSystem);
@@ -889,6 +906,11 @@ export module ecs {
             for (let sys of this.executeSystemFlows) {
                 if (sys.canRun()) { // 与System关联的Group如果没有实体，则不去执行这个System。
                     sys.execute(dt);
+                }
+            }
+            if(this.eventSystemsCnt > 0) {
+                for(let i = 0; i < this.eventSystemsCnt; i++) {
+                    this.eventSystems[i].clearEventEntities();
                 }
             }
         }
@@ -916,6 +938,12 @@ export module ecs {
             }
             s += `Active entity count: ${activeEntityCount()}`;
             this.debugInfo.innerHTML = `<pre>${s}</pre>`;
+
+            if(this.eventSystemsCnt > 0) {
+                for(let i = 0; i < this.eventSystemsCnt; i++) {
+                    this.eventSystems[i].clearEventEntities();
+                }
+            }
         }
     }
 
