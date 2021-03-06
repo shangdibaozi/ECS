@@ -1,14 +1,16 @@
+
+// 重构原则：如无必要，勿增实体。
 export module ecs {
     //#region 类型声明
     type ComponentConstructor<T extends IComponent = IComponent> = {
         /**
          * 每类组件的唯一id
          */
-        tid?: number;
+        tid: number;
         /**
          * 组件名称，可用作实体对象的属性名称。
          */
-        compName?: string;
+        compName: string;
         new(): T;
     }
     type ComponentAddOrRemove = (entity: Entity) => void;
@@ -20,9 +22,14 @@ export module ecs {
      */
     export abstract class IComponent {
         /**
+         * 组件的类型id，-1表示未给该组件分配id
+         */
+        static tid: number = -1;
+        static compName: string;
+        /**
          * 组件所在的实体对象
          */
-        ent: ecs.Entity;
+        ent!: ecs.Entity;
         /**
          * 组件被回收时会调用这个接口。可以在这里重置数据，或者解除引用。
          */
@@ -43,7 +50,7 @@ export module ecs {
      */
     export function register(componentName: string) {
         return function (ctor: ComponentConstructor) {
-            if (ctor.tid == null) {
+            if (ctor.tid === -1) {
                 ctor.tid = compTid++;
                 ctor.compName = componentName;
                 componentConstructors.push(ctor);
@@ -262,11 +269,11 @@ export module ecs {
     //#endregion
 
     class Mask {
-        private mask: Uint32Array = null;
+        private mask: Uint32Array;
         private size: number = 0;
 
         constructor() {
-            let length = Math.ceil(compTid / 32);
+            let length = Math.ceil(compTid / 31);
             this.mask = new Uint32Array(length);
             this.size = length;
         }
@@ -316,7 +323,7 @@ export module ecs {
          */
         public eid: number = -1;
 
-        public mask = new Mask();
+        private mask = new Mask();
 
         /**
          * 当前实体身上附加的组件构造函数
@@ -344,6 +351,7 @@ export module ecs {
             // 创建组件对象
             let component = createComponent(ctor);
             // 将组件对象直接附加到实体对象身上，方便直接获取。
+            // @ts-ignore
             this[ctor.compName] = component;
             this.compTid2Ctor.set(componentTypeId, ctor);
             // 广播实体添加组件的消息
@@ -355,6 +363,7 @@ export module ecs {
         }
 
         get<T extends IComponent>(ctor: ComponentConstructor<T>): T {
+            // @ts-ignore
             return this[ctor.compName];
         }
 
@@ -365,9 +374,13 @@ export module ecs {
         remove<T extends IComponent>(ctor: ComponentConstructor<T>) {
             let componentTypeId = ctor.tid;
             if (this.mask.has(componentTypeId)) {
+                // @ts-ignore
                 (this[ctor.compName] as IComponent).reset();
+                // @ts-ignore
                 (this[ctor.compName] as IComponent).ent = null;
+                // @ts-ignore
                 componentPools[componentTypeId].push(this[ctor.compName]);
+                // @ts-ignore
                 this[ctor.compName] = null;
                 this.mask.delete(componentTypeId);
                 broadcastComponentAddOrRemove(this, componentTypeId);
@@ -380,11 +393,15 @@ export module ecs {
          */
         destroy() {
             for (let ctor of this.compTid2Ctor.values()) {
+                // @ts-ignore
                 (this[ctor.compName] as IComponent).reset();
+                // @ts-ignore
                 (this[ctor.compName] as IComponent).ent = null;
+                // @ts-ignore
                 componentPools[ctor.tid].push(this[ctor.compName]);
                 this.mask.delete(ctor.tid);
                 broadcastComponentAddOrRemove(this, ctor.tid);
+                // @ts-ignore
                 this[ctor.compName] = null;
             }
             this.compTid2Ctor.clear();
@@ -399,10 +416,9 @@ export module ecs {
          */
         private matcher: IMatcher;
 
-
         private _matchEntities: Map<number, E> = new Map();
 
-        private _entitiesCache: E[] = null;
+        private _entitiesCache: E[] | null = null;
 
         /**
          * 符合规则的实体
@@ -428,6 +444,11 @@ export module ecs {
             return this.matchEntities[0];
         }
 
+        /**
+         * 与Group关联的System
+         */
+        public system: ComblockSystem | null = null;
+
         constructor(matcher: IMatcher) {
             this.matcher = matcher;
         }
@@ -447,6 +468,8 @@ export module ecs {
                 this._matchEntities.delete(entity.eid);
                 this._entitiesCache = null;
                 this.count--;
+                // @ts-ignore
+                this.system?._removedEntities.push(entity);
             }
         }
 
@@ -493,6 +516,7 @@ export module ecs {
      */
     class AnyOf extends BaseOf {
         public isMatch(entity: Entity): boolean {
+            // @ts-ignore
             return this.mask.or(entity.mask);
         }
 
@@ -506,6 +530,7 @@ export module ecs {
      */
     class AllOf extends BaseOf {
         public isMatch(entity: Entity): boolean {
+            // @ts-ignore
             return this.mask.and(entity.mask);
         }
 
@@ -524,6 +549,7 @@ export module ecs {
         }
 
         public isMatch(entity: Entity): boolean {
+            // @ts-ignore
             return !this.mask.or(entity.mask);
         }
     }
@@ -540,7 +566,7 @@ export module ecs {
      */
     class Matcher implements IMatcher {
         protected rules: BaseOf[] = [];
-        protected _indices: number[] = null;
+        protected _indices: number[] | null = null;
         /**
          * 匹配器关注的组件索引。在创建Group时，Context根据组件id去给Group关联组件的添加和移除事件。
          */
@@ -647,191 +673,144 @@ export module ecs {
     }
 
     //#region System
-    export interface ISystem {
-
-    }
-
-    export interface IExecuteSystem extends ISystem {
-        canRun(): boolean;
-        init(): void;
-        execute(dt: number): void;
-    }
-    
-    export interface IReactiveSystem extends IExecuteSystem {
-
-    }
-
     /**
-     * 每一帧都会去执行的系统
-     */
-    export abstract class ExecuteSystem<E extends Entity = Entity> implements IExecuteSystem {
-
-        /**
-         * 当前系统关心的组件
-         */
-        protected readonly group: Group<E>;
-
-        /**
-         * 帧时间
-         */
-        protected dt: number = 0;
-
-        constructor() {
-            this.group = createGroup(this.filter(), 'e');
-        }
-
-        /**
-         * 不需要经过group的判断，无条件执行。
-         */
-        init(): void {
-
-        }
-
-        canRun() {
-            return this.group.count > 0;
-        }
-
-        execute(dt: number): void {
-            this.dt = dt;
-            this.update(this.group.matchEntities);
-        }
-        /**
-         * 实体过滤规则
-         * 
-         * 根据提供的组件过滤实体。
-         */
-        abstract filter(): IMatcher;
-        abstract update(entities: E[]): void;
-    }
-    /**
-     * 响应式的系统，如果收集到实体则只执行一次，每次执行完后都会移除当前收集的实体，直到再次收集到实体。
+     * 如果需要监听实体首次进入System的情况，实现这个接口。
      * 
+     * entityEnter会在update方法之前执行，实体进入后，不会再次进入entityEnter方法中。
+     * 当实体从当前System移除，下次再次符合条件进入System也会执行上述流程。
      */
-    export abstract class ReactiveSystem<E extends Entity = Entity> implements IReactiveSystem {
-
-        /**
-         * 当前系统关心的组件
-         */
-        protected readonly group: Group<E>;
-        protected dt: number = 0;
-
-        constructor() {
-            this.group = createGroup(this.filter(), 'r');
-        }
-
-        init() {
-
-        }
-
-        canRun() {
-            return this.group.count > 0;
-        }
-
-        execute(dt: number): void {
-            this.dt = dt;
-            this.update(this.group.matchEntities);
-            this.group.clear();
-        }
-        /**
-         * 实体过滤规则
-         * 
-         * 根据提供的组件过滤实体。
-         */
-        abstract filter(): IMatcher;
-        abstract update(entities: E[]): void;
+    export interface IEntityEnterSystem<E extends Entity = Entity> {
+        entityEnter(entities: E[]): void;
     }
 
     /**
-     * 自动回收实体的ReactiveSystem。
+     * 如果需要监听实体从当前System移除，需要实现这个接口。
      */
-    export abstract class AutoDestroyEntityReactiveSystem<E extends Entity = Entity> extends ReactiveSystem<E> {
-        execute(dt: number): void {
-            this.dt = dt;
-            this.update(this.group.matchEntities as E[]);
-            for (let e of this.group.matchEntities) {
-                e.destroy();
-            }
-            this.group.clear();
-        }
+    export interface IEntityRemoveSystem<E extends Entity = Entity> {
+        entityRemove(entities: E[]): void;
     }
 
-    /**
-     * 结合ExecuteSystem和ReactiveSystem的特性，可以同时处理实体进入System的逻辑，和每帧的逻辑。
-     */
-    export abstract class RExecuteSystem<E extends Entity = Entity> implements IExecuteSystem {
-        protected readonly group: Group;
-        protected readonly rGroup: Group;
+    export abstract class ComblockSystem<E extends Entity = Entity> {
+        protected group: Group<E>;
+        private readonly rGroup: Group<E> | null = null;
         protected dt: number = 0;
+
+        private _removedEntities: E[] | null = null;
+
+        execute!: (dt: number) => void;
 
         constructor() {
             this.group = createGroup(this.filter(), 'e');
-            this.rGroup = createGroup(this.filter(), 'r');
+
+            let hasOwnProperty = Object.hasOwnProperty;
+            let prototype = Object.getPrototypeOf(this);
+            let hasEntityEnter = hasOwnProperty.call(prototype, 'entityEnter');
+            let hasEntityRemove = hasOwnProperty.call(prototype, 'entityRemove');
+
+            if(hasEntityEnter && hasEntityRemove) {
+                this.rGroup = createGroup(this.filter(), 'r');
+                this.group.system = this;
+                this._removedEntities = [];
+                this.execute = this.execute3;
+            }
+            else if(hasEntityEnter && !hasEntityRemove) {
+                this.rGroup = createGroup(this.filter(), 'r');
+                this.execute = this.execute1;
+            }
+            else if(!hasEntityEnter && hasEntityRemove) {
+                this.group.system = this;
+                this._removedEntities = [];
+                this.execute = this.execute2;
+            }
+            else {
+                this.execute = this.execute0;
+            }
         }
 
         init(): void {
 
         }
 
-        canRun() {
+        hasEntity(): boolean {
             return this.group.count > 0;
         }
 
-        execute(dt: number): void {
+        /**
+         * 只执行update
+         * @param dt 
+         * @returns 
+         */
+        private execute0(dt: number): void {
+            if(this.group.count === 0) {
+                return;
+            }
+            this.dt = dt;
+            this.update(this.group.matchEntities);
+        }
+
+        /**
+         * 如果有新的Entity加入，则先执行entityEnter，然后执行update
+         * @param dt 
+         * @returns 
+         */
+        private execute1(dt: number): void {
+            if(this.group.count === 0) {
+                return;
+            }
             this.dt = dt;
             // 处理刚进来的实体
-            if (this.rGroup.count > 0) {
-                this.entityEnter(this.rGroup.matchEntities as E[]);
-                this.rGroup.clear();
+            if (this.rGroup!.count > 0) {
+                (this as unknown as IEntityEnterSystem).entityEnter(this.rGroup!.matchEntities as E[]);
+                this.rGroup!.clear();
             }
-            // 
             this.update(this.group.matchEntities as E[]);
         }
 
         /**
-         * 实体过滤规则
-         * 
-         * 根据提供的组件过滤实体。
+         * 如果有Entity不满足条件被移除了，则先执行update，在执行entityRemove。如果是在update执行后被移除的，
+         * 那么在下次执行execute的时候，如果_removedEntities里面有Entity，则会执行一次entityRemove。
+         * @param dt 
+         * @returns 
          */
-        abstract filter(): IMatcher;
-        abstract entityEnter(entities: E[]): void;
-        abstract update(entities: E[]): void;
-    }
-
-    export abstract class EventSystem<E extends Entity = Entity> implements IExecuteSystem {
-        protected readonly group: Group;
-        protected readonly eGroup: Group;
-        protected dt: number = 0;
-
-        constructor() {
-            this.group = createGroup(this.filter(), 'e');
-            this.eGroup = createGroup(this.event(), 'r');
-        }
-
-        init(): void {
-
-        }
-
-        canRun() {
-            return this.group.count > 0 || this.eGroup.count > 0;
-        }
-
-        clearEventEntities() {
-            if(this.eGroup.count > 0) {
-                for(let e of this.eGroup.matchEntities) {
-                    e.destroy();
+        private execute2(dt: number): void {
+            if(this.group.count === 0) {
+                if(this._removedEntities && this._removedEntities.length > 0) {
+                    (this as unknown as IEntityRemoveSystem).entityRemove(this._removedEntities);
+                    this._removedEntities.length = 0;
                 }
+                return;
+            }
+            this.dt = dt;
+            this.update(this.group.matchEntities as E[]);
+            if(this._removedEntities && this._removedEntities.length > 0) {
+                (this as unknown as IEntityRemoveSystem).entityRemove(this._removedEntities);
+                this._removedEntities.length = 0;
             }
         }
 
-        execute(dt: number): void {
-            this.dt = dt;
-            // 处理事件实体
-            if (this.eGroup.count > 0) {
-                this.eventCallback(this.eGroup.matchEntities as E[], this.group.matchEntities as E[]);
+        /**
+         * 先执行entityEnter，在执行update，最后执行entityRemove。
+         * @param dt 
+         * @returns 
+         */
+        private execute3(dt: number): void {
+            if(this.group.count === 0) {
+                if(this._removedEntities && this._removedEntities.length > 0) {
+                    (this as unknown as IEntityRemoveSystem).entityRemove(this._removedEntities);
+                    this._removedEntities.length = 0;
+                }
+                return;
             }
-            // 有可能事件回调中删除了全部实体
-            if(this.group.count > 0) {
-                this.update(this.group.matchEntities as E[]);
+            this.dt = dt;
+            // 处理刚进来的实体
+            if (this.rGroup!.count > 0) {
+                (this as unknown as IEntityEnterSystem).entityEnter(this.rGroup!.matchEntities as E[]);
+                this.rGroup!.clear();
+            }
+            this.update(this.group.matchEntities as E[]);
+            if(this._removedEntities && this._removedEntities.length > 0) {
+                (this as unknown as IEntityRemoveSystem).entityRemove(this._removedEntities);
+                this._removedEntities.length = 0;
             }
         }
 
@@ -841,108 +820,39 @@ export module ecs {
          * 根据提供的组件过滤实体。
          */
         abstract filter(): IMatcher;
-        abstract event(): IMatcher;
         abstract update(entities: E[]): void;
-        abstract eventCallback(eventEntities: E[], entities: E[]): void;
     }
 
     /**
      * System的root，对游戏中的System遍历从这里开始。
+     * 
+     * 一个System组合中只能有一个RootSystem，可以有多个并行的RootSystem。
      */
-    export class RootSystem implements ISystem {
-        private executeSystemFlows: IExecuteSystem[] = [];
-        private eventSystems: EventSystem[] = [];
-        private eventSystemsCnt: number = 0;
+    export class RootSystem {
+        private executeSystemFlows: ComblockSystem[] = [];
+        private systemCnt: number = 0;
 
-        private debugInfo: HTMLElement;
-        private executeCount: { [key: string]: number } = null;
-
-        constructor() {
-
-        }
-
-        initDebug() {
-            this.executeCount = Object.create(null);
-            this.debugInfo = document.createElement('debugInfo');
-            this.debugInfo.style.position = 'absolute'
-            this.debugInfo.style.top = '60px';
-            this.debugInfo.style.left = '10px';
-            this.debugInfo.style.color = '#ffffff';
-            document.body.appendChild(this.debugInfo);
-
-            for (let sys of this.executeSystemFlows) {
-                this.executeCount[sys['__proto__'].constructor.name] = 0;
-            }
-        }
-
-        add(system: ISystem) {
-            if (system instanceof System) { // 将嵌套的System都“摊平”，放在根System中进行遍历，减少execute的频繁进入退出。
-                Array.prototype.push.apply(this.executeSystemFlows, system.executeSystems);
-                system.executeSystems.forEach(sys => {
-                    if(sys instanceof EventSystem) {
-                        this.eventSystems.push(sys);
-                        this.eventSystemsCnt++;
-                    }
-                });
-                system.executeSystems.length = 0;
-            }
-            else if(system instanceof EventSystem) {
-                this.eventSystems.push(system);
-                this.eventSystemsCnt++;
+        add(system: System | ComblockSystem){
+            if(system instanceof System) {
+                // 将嵌套的System都“摊平”，放在根System中进行遍历，减少execute的频繁进入退出。
+                Array.prototype.push.apply(this.executeSystemFlows, system.comblockSystems);
             }
             else {
-                this.executeSystemFlows.push(system as IExecuteSystem);
+                this.executeSystemFlows.push(system as ComblockSystem);
             }
+            this.systemCnt = this.executeSystemFlows.length;
             return this;
         }
 
         init() {
-            for (let sys of this.executeSystemFlows) {
-                sys.init();
+            for (let i = 0; i < this.systemCnt; i++) {
+                this.executeSystemFlows[i].init();
             }
         }
 
         execute(dt: number) {
-            for (let sys of this.executeSystemFlows) {
-                if (sys.canRun()) { // 与System关联的Group如果没有实体，则不去执行这个System。
-                    sys.execute(dt);
-                }
-            }
-            if(this.eventSystemsCnt > 0) {
-                for(let i = 0; i < this.eventSystemsCnt; i++) {
-                    this.eventSystems[i].clearEventEntities();
-                }
-            }
-        }
-
-        debugExecute(dt: number) {
-            let s = '';
-            for (let sys of this.executeSystemFlows) {
-                let sysName = sys['__proto__'].constructor.name;
-                let startTime = Date.now();
-                if (sys.canRun()) { // 与System关联的Group如果没有实体，则不去执行这个System。
-                    sys.execute(dt);
-                    this.executeCount[sysName]++;
-                }
-
-                let endTime = Date.now();
-                let color = sys.canRun() ? 'white' : 'green'
-                s += `<font size="1" color="${color}">${sysName}: ${endTime - startTime} ms\n`;
-                if (sys instanceof ReactiveSystem) {
-                    s += `  |_execute count: ${this.executeCount[sysName]}\n`;
-                }
-                if (sys.canRun()) {
-                    s += `  |_entity count: ${sys['group'].count}\n`;
-                }
-                s += '</font>';
-            }
-            s += `Active entity count: ${activeEntityCount()}`;
-            this.debugInfo.innerHTML = `<pre>${s}</pre>`;
-
-            if(this.eventSystemsCnt > 0) {
-                for(let i = 0; i < this.eventSystemsCnt; i++) {
-                    this.eventSystems[i].clearEventEntities();
-                }
+            for (let i = 0; i < this.systemCnt; i++) {
+                this.executeSystemFlows[i].execute(dt);
             }
         }
     }
@@ -950,20 +860,19 @@ export module ecs {
     /**
      * 系统组合器，用于将多个相同功能模块的系统逻辑上放在一起。System也可以嵌套System。
      */
-    export class System implements ISystem {
-        executeSystems: IExecuteSystem[] = [];
-
-        constructor() {
-
+    export class System {
+        private _comblockSystems: ComblockSystem[] = [];
+        get comblockSystems() {
+            return this._comblockSystems;
         }
 
-        add(system: ISystem) {
+        add(system: System | ComblockSystem) {
             if (system instanceof System) {
-                Array.prototype.push.apply(this.executeSystems, system.executeSystems);
-                system.executeSystems.length = 0;
+                Array.prototype.push.apply(this._comblockSystems, system._comblockSystems);
+                system._comblockSystems.length = 0;
             }
             else {
-                this.executeSystems.push(system as IExecuteSystem);
+                this._comblockSystems.push(system as ComblockSystem);
             }
             return this;
         }
