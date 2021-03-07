@@ -229,13 +229,21 @@ windows['ecs'] = ecs;
 
 # 相关ecs框架
 https://github.com/dualface/ecs-typescript
+
 https://github.com/nomos/lokas-ts
 
 https://github.com/darkoverlordofdata/entitas-ts
+
 https://github.com/NateTheGreatt/bitecs
+
 https://github.com/ecsyjs/ecsy
+
 https://github.com/dannyfritz/flock-ecs
+
 https://github.com/ddmills/geotic
+
 https://github.com/fireveined/perform-ecs
+
 https://github.com/ayebear/picoes
+
 https://github.com/bvalosek/tiny-ecs
