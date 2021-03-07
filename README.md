@@ -148,7 +148,7 @@ export class MoveSystem extends ecs.ComblockSystem<AvatarEntity> implements ecs.
     }
 
     filter(): ecs.Matcher {
-        return ecs.allOf(NodeComponent, VelocityComponent);
+        return ecs.allOf(MoveComponent, TransformComponent);
     }
     
     // 每帧都会更新
@@ -203,6 +203,12 @@ export class GameControllerBehaviour extends cc.Component {
         this.rootSystem = new RootSystem();
         this.rootSystem.init();
     }
+    
+    createAvatar(node: cc.Node) {
+        let entity = ecs.createEntityWithComps<AvatarEntity>(NodeComponent, TransformComponent, MoveComponent);
+        entity.Node.val = node;
+        entity.Move.speed = 100;
+    }
 
     update(dt: number) {
         this.rootSystem.execute(dt);
@@ -218,4 +224,5 @@ windows['ecs'] = ecs;
 ```
 在chrome浏览器的console中输入ecs可看到
 ![](./imgs/ecs_debug.png)
+
 其中红框内为ecs上下文数据。
