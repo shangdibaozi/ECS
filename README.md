@@ -3,31 +3,29 @@
 
 # 使用说明
 ## 组件
-组件必须实现ecs.IComponent，并且需要使用ecs.register注册组件。
+自定义组件必须继承ecs.IComponent，并且需要使用ecs.register注册组件。
 ```TypeScript
 @ecs.register('Hello')
 export class HelloComponent extends ecs.IComponent {
-    eid: number;
+    info: string;
     data: number;
 
     // 组件被回收前会调用这个方法。
     reset() {
-        this.edi = 0;
+        this.info = '';
         this.data = 0;
     }
 }
 ```
-ecs.register组件填入的参数是方便通过```entity.Hello```获得组件对象。ecs.register还会将组件的构造函数存入ecs上下文中，并且给该类组件分配一个组件id。
+## ecs.register功能
+- 能通过```entity.Hello```获得组件对象；
+- 将组件的构造函数存入ecs上下文中，并且给该类组件分配一个组件id。
 
 ## 实体
 为了能利用Typescript的类型提示机制，在使用实体的时候需要用户自己继承ecs.Entity。
 ```TypeScript
-class AEntity extends ecs.Entity {
+export class HelloEntity extends ecs.Entity {
     Hello: HelloComponent; // 这里的Hello要和ecs.register中填入的参数一致
-}
-
-export EntityX extends AEntity {
-
 }
 ```
 
@@ -87,12 +85,11 @@ ecs.allOf(AComponent, BComponent).excludeOf(CComponent).excludeOf(DComponent);
 ```
 
 ## 系统
-- ecs.System: 用来组合某一功能所包含的系统；
-- ecs.RootSystem: 系统的root；
-- ecs.ReactiveSystem: 如果捕获到组件则只会执行一次；
-- ecs.ExecuteSystem: 如果捕获到组件则每帧都会执行；
-- ecs.RExecuteSystem: 如果捕获到组件，能监听组件第一次进入，并且每帧都会执行；
-- ecs.AutoDestroyEntityReactiveSystem：会自动销毁实体；
+- ecs.System: 用来组合某一功能所包含的System；
+- ecs.RootSystem: System的root；
+- ecs.ComblockSystem: 抽象类，组合式的System。默认情况，如果该System有实体，则每帧都会执行update方法；
+- ecs.IEntityEnterSystem: 实现这个接口表示关注实体的首次进入；
+- ecs.IEntityRemoveSystem: 实现这个接口表示关注实体的移除；
 
 # 怎么使用
 1、声明组件
@@ -106,25 +103,21 @@ export class NodeComponent extends ecs.IComponent {
     }
 }
 
-@ecs.reigster('Velocity')
-export class VelocityComponent extends ecs.IComponent {
+@ecs.reigster('Move')
+export class MoveComponent extends ecs.IComponent {
     heading: cc.Vec2 = cc.v2();
-    length: number = 0;
+    speed: number = 0;
 
     reset() {
         this.heading.x = 0;
         this.heading.y = 0;
-        this.length = 0;
+        this.speed = 0;
     }
 }
 
-@ecs.register('Jump')
-export class JumpComponent extends ecs.IComponent {
-    height: number = 10;
-
-    reset() {
-
-    }
+export AvatarEntity extends ecs.Entity {
+    Node: NodeComponent;
+    Move: MoveComponent;
 }
 ```
 
@@ -138,7 +131,11 @@ export class RoomSystem extends ecs.RootSystem {
     }
 }
 
-export class MoveSystem extends ecs.RExecuteSystem<EntityX> {
+export class MoveSystem extends ecs.ComblockSystem<AvatarEntity> implements ecs.IEntityEnterSystem {
+
+    init() {
+    
+    }
 
     filter(): ecs.Matcher {
         return ecs.allOf(NodeComponent, VelocityComponent);
@@ -152,26 +149,14 @@ export class MoveSystem extends ecs.RExecuteSystem<EntityX> {
         }
     }
     // 每帧都会更新
-    update(entities: EntityX[]) {
+    update(entities: AvatarEntity[]) {
         for(let e of entities) {
             let moveComp = e.Move; // e.get(MoveComponent);
             lel node = e.Node.val; //e.get(NodeComponent).val;
 
-            let dtS = moveComp.heading.mul(moveComp.length * this.dt);
+            let dtS = moveComp.heading.mul(moveComp.speed * this.dt);
             this.node.x += dtS.x;
             this.node.y += dtS.y;
-        }
-    }
-}
-
-export class JumpSystem extends ecs.AutoDestroyEntityReactiveSystem {
-    filter(): ecs.Matcher {
-        return ecs.allOf(NodeComponent, JumpComponent);
-    }
-    // 执行一次后，所有实体会自动被回收
-    update(entities: ecs.Entity[]) {
-        for(let e of entities) {
-            ...
         }
     }
 }
@@ -182,27 +167,15 @@ export class JumpSystem extends ecs.AutoDestroyEntityReactiveSystem {
 const { ccclass, property } = cc._decorator;
 @ccclass
 export class GameControllerBehaviour extends cc.Component {
-    @property
-    isDebugEcs: boolean = true;
-
     rootSystem: RootSystem = null;
 
     onLoad() {
         this.rootSystem = new RootSystem();
         this.rootSystem.init();
-
-        if(this.isDebugEcs) {
-            this.rootSystem.initDebug();
-        }
     }
 
     update(dt: number) {
-        if(this.isDebugEcs) {
-            this.rootSystem.debugExecute(dt);
-        }
-        else {
-            this.rootSystem.execute(dt);
-        }
+        this.rootSystem.execute(dt);
     }
 }
 
@@ -216,57 +189,3 @@ windows['ecs'] = ecs;
 在chrome浏览器的console中输入ecs可看到
 ![](./imgs/ecs_debug.png)
 其中红框内为ecs上下文数据。
-
-
-# Samples
-https://github.com/shangdibaozi/ecs_start
-
-# System使用
-
-## ecs.EventSystem
-ecs.EventSystem是一个支持事件的System。
-
-使用方式：
-
-```Typescript
-// 普通组件
-@ecs.register('Test')
-export class TestComponent extends ecs.IComponent {
-    reset() {
-
-    }
-}
-
-// 事件组件
-@ecs.register('Event')
-export class EventComponent extends ecs.IComponent {
-
-    reset() {
-
-    }
-}
-
-export class TestEventSystem extends ecs.EventSystem {
-    filter(): ecs.IMatcher {
-        return ecs.allOf(TestComponent);
-    }
-
-    // 事件过滤
-    event(): ecs.IMatcher {
-        return ecs.allOf(EventComponent);
-    }
-
-    update(entities: ecs.Entity[]) {
-
-    }
-
-    // 当有绑定事件组件的实体创建时，在轮到当前系统运行时会先执行这里的方法。
-    // eventEntities里面是所有通过事件过滤的实体，entities是执行update时的实体
-    eventCallback(eventEntities: ecs.Entity[], entities: ecs.Entity[]) {
-
-    }
-}
-
-// 触发事件
-ecs.createEntityWithComp(EventComponent);
-```
