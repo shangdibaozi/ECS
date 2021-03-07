@@ -115,9 +115,19 @@ export class MoveComponent extends ecs.IComponent {
     }
 }
 
-export AvatarEntity extends ecs.Entity {
+@ecs.register('Transform')
+export class TransformComponent extends ecs.IComponent {
+    position: cc.Vec2 = cc.v2();
+    angle: number;
+    reset() {
+    
+    }
+}
+
+export class AvatarEntity extends ecs.Entity {
     Node: NodeComponent;
     Move: MoveComponent;
+    Transform: TransformComponent;
 }
 ```
 
@@ -127,7 +137,7 @@ export class RoomSystem extends ecs.RootSystem {
     constructor() {
         super();
         this.add(new MoveSystem());
-        this.add(new JumpSystem());
+        this.add(new RenderSystem());
     }
 }
 
@@ -140,23 +150,43 @@ export class MoveSystem extends ecs.ComblockSystem<AvatarEntity> implements ecs.
     filter(): ecs.Matcher {
         return ecs.allOf(NodeComponent, VelocityComponent);
     }
-
-    // 实体第一次进入MoveSystem会进入此方法
-    entityEnter(entities: EntityX[]) {
-        for(e of entities) {
-            // e.get(VelocityComponent).length = 20;
-            e.Velocity.length = 20;
-        }
-    }
+    
     // 每帧都会更新
     update(entities: AvatarEntity[]) {
         for(let e of entities) {
             let moveComp = e.Move; // e.get(MoveComponent);
-            lel node = e.Node.val; //e.get(NodeComponent).val;
+            lel position = e.Transform.position;
+            
+            position.x += moveComp.speed.x * moveComp.speed * this.dt;
+            position.y += moveComp.speed.y * moveComp.speed * this.dt;
+            
+            e.Transform.angle = cc.misc.lerp(e.Transform.angle, Math.atan2(moveComp.speed.y, moveComp.speed.x) * cc.macro.DEG, dt);
+        }
+    }
+}
 
-            let dtS = moveComp.heading.mul(moveComp.speed * this.dt);
-            this.node.x += dtS.x;
-            this.node.y += dtS.y;
+export class RenderSystem extends.ecs.ComblockSystem<AvatarEntity> implements ecs.IEntityEnterSystem, ecs.IEntityRemoveSystem {
+    filter(): ecs.Matcher {
+        return ecs.allOf(NodeComponent, TransformComponent);
+    }
+    
+    // 实体第一次进入MoveSystem会进入此方法
+    entityEnter(entities: AvatarEntity[]) {
+        for(e of entities) {
+            e.Node.val.active = true;
+        }
+    }
+    
+    entityRemove(entities: AvatarEntity[]) {
+        for(let e of entities) {
+            // Global.avatarNodePool.put(e.Node.val);
+        }
+    }
+    
+    update(entities: AvatarEntity[]) {
+        for(let e of entities) {
+            e.Node.val.setPosition(e.Transform.position);
+            e.Node.val.angle = e.Transform.angle;
         }
     }
 }
