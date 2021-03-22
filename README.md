@@ -90,6 +90,7 @@ ecs.allOf(AComponent, BComponent).excludeOf(CComponent).excludeOf(DComponent);
 - ecs.ComblockSystem: 抽象类，组合式的System。默认情况，如果该System有实体，则每帧都会执行update方法；
 - ecs.IEntityEnterSystem: 实现这个接口表示关注实体的首次进入；
 - ecs.IEntityRemoveSystem: 实现这个接口表示关注实体的移除；
+- ecs.ISystemFirstUpdate: 实现这个接口会在System第一次执行update前执行一次firstUpdate
 
 # 怎么使用
 1、声明组件
