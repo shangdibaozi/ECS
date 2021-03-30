@@ -153,15 +153,13 @@ export module ecs {
         }
     }
 
-    
-    type SystemType = 'c' | 'e' | 'r';
     /**
      * 创建group，每个group只关心对应组件的添加和删除
-     * @param matchCompTypeIds 
-     * @param systemType e-表示ExecuteSystem，r-表示ReactiveSystem，c-表示在系统中自己手动调用createGroup创建的筛选规则
+     * @param matcher 实体筛选器 
+     * @param groupType group的类型，s-表现ecs框架的类型，c-表示在用户自己脚本中创建的group类型
      */
-    export function createGroup<E extends Entity = Entity>(matcher: IMatcher, systemType: SystemType = 'c', system: ComblockSystem | null = null): Group<E> {
-        let key = `${systemType}_${matcher.getKey()}`;
+    export function createGroup<E extends Entity = Entity>(matcher: IMatcher, system: ComblockSystem | null = null): Group<E> {
+        let key = `${matcher.getKey()}`;
         let group = groups.get(key);
         if (!group) {
             group = new Group(matcher, system);
@@ -172,6 +170,20 @@ export module ecs {
             }
         }
         return group as unknown as Group<E>;
+    }
+
+    /**
+     * 动态查询实体
+     * @param matcher 
+     * @returns 
+     */
+    export function query<E extends Entity = Entity>(matcher: IMatcher): E[] {
+        let group = groups.get(matcher.getKey());
+        if(!group) {
+            group = createGroup(matcher);
+            eid2Entity.forEach(group.onComponentAddOrRemove, group);
+        }
+        return group.matchEntities as E[];
     }
 
     /**
@@ -403,20 +415,7 @@ export module ecs {
          * 销毁实体，实体会被回收到实体缓存池中。
          */
         destroy() {
-            for (let ctor of this.compTid2Ctor.values()) {
-                // @ts-ignore
-                (this[ctor.compName] as IComponent).reset();
-                // @ts-ignore
-                (this[ctor.compName] as IComponent).ent = null;
-                // @ts-ignore
-                componentPools.get(ctor.tid).push(this[ctor.compName]);
-                this.mask.delete(ctor.tid);
-                broadcastComponentAddOrRemove(this, ctor.tid);
-                // @ts-ignore
-                this[ctor.compName] = null;
-            }
-            this.compTid2Ctor.clear();
-            this.mask.clear();
+            this.compTid2Ctor.forEach(this.remove, this);
             destroyEntity(this);
         }
     }
@@ -489,7 +488,6 @@ export module ecs {
         /**
          * 实体添加或删除组件回调
          * @param entity 
-         * @param ctid 组件id；如果实体添加组件，是不需要传ctid，那么它的默认值就是-1；如果实体移除组件，则会传递被移除组件的组件类型id过来
          */
         private onComponentAddOrRemove1(entity: E) {
             if (this.matcher.isMatch(entity)) { // Group只关心指定组件在实体身上的添加和删除动作。
@@ -518,6 +516,7 @@ export module ecs {
             this._matchEntities.clear();
             this._entitiesCache = null;
             this.count = 0;
+            this.system = null;
         }
     }
 
@@ -709,8 +708,6 @@ export module ecs {
 
     /**
      * 如果需要监听实体从当前System移除，需要实现这个接口。
-     * 
-     * TODO: 存在这样一种情况：线移除实体的某个组件，然后再添加，这样的情况下，该实体也会在被移除的实体列表里面。
      */
     export interface IEntityRemoveSystem<E extends Entity = Entity> {
         entityRemove(entities: E[]): void;
@@ -763,10 +760,10 @@ export module ecs {
 
             if(hasEntityEnter || hasEntityRemove) {
                 // @ts-ignore
-                this.group = createGroup(this.filter(), 'e', this);
+                this.group = createGroup(this.filter(), this);
             }
             else {
-                this.group = createGroup(this.filter(), 'e');
+                this.group = createGroup(this.filter());
             }
 
             if(hasFirstUpdate) {
