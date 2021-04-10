@@ -196,6 +196,11 @@ export module ecs {
         groups.forEach((group) => {
             group.clear();
         });
+        componentAddOrRemove.forEach(callbackLst => {
+            callbackLst.length = 0;
+        });
+        eid2Entity.clear();
+        groups.clear();
     }
 
     /**
