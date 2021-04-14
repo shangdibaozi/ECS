@@ -11,7 +11,8 @@ export module ecs {
          */
         compName: string;
         new(): T;
-    }
+    };
+
     type ComponentAddOrRemove = (entity: Entity) => void;
     //#endregion
 
@@ -26,14 +27,17 @@ export module ecs {
         static tid: number = -1;
         static compName: string;
         /**
-         * 组件所在的实体对象
+         * 拥有该组件的实体
          */
         ent!: ecs.Entity;
         /**
          * 组件被回收时会调用这个接口。可以在这里重置数据，或者解除引用。
+         * 
+         * **不要偷懒，除非你能确定并保证组件在复用时，里面的数据是先赋值然后再使用。**
          */
         abstract reset(): void;
     }
+
     /**
      * 组件缓存池
      */
@@ -48,8 +52,10 @@ export module ecs {
      * 组件构造函数
      */
     let componentConstructors: ComponentConstructor[] = [];
+
     /**
-     * 每个组件的添加和删除的动作都要派送到“关心”它们的group上。
+     * 每个组件的添加和删除的动作都要派送到“关心”它们的group上。goup对当前拥有或者之前（删除前）拥有该组件的实体进行组件规则判断。判断该实体是否满足group
+     * 所期望的组件组合。
      */
      let componentAddOrRemove: Map<number, ComponentAddOrRemove[]> = new Map();
 
@@ -67,14 +73,13 @@ export module ecs {
                 componentAddOrRemove.set(ctor.tid, []);
             }
             else {
-                throw new Error('already contain component ' + componentName);
+                throw new Error(`重复注册组件： ${componentName}.`);
             }
         }
     }
     //#endregion
 
     //#region context
-    
 
     /**
      * 实体对象缓存池
@@ -88,6 +93,8 @@ export module ecs {
     
     /**
      * 缓存的group
+     * 
+     * key是组件的筛选规则，一个筛选规则对应一个group
      */
     let groups: Map<string, Group> = new Map();
 
@@ -155,14 +162,13 @@ export module ecs {
 
     /**
      * 创建group，每个group只关心对应组件的添加和删除
-     * @param matcher 实体筛选器 
-     * @param groupType group的类型，s-表现ecs框架的类型，c-表示在用户自己脚本中创建的group类型
+     * @param matcher 实体筛选器
      */
-    export function createGroup<E extends Entity = Entity>(matcher: IMatcher, system: ComblockSystem | null = null): Group<E> {
+    export function createGroup<E extends Entity = Entity>(matcher: IMatcher): Group<E> {
         let key = matcher.getKey();
         let group = groups.get(key);
         if (!group) {
-            group = new Group(matcher, system);
+            group = new Group(matcher);
             groups.set(key, group);
             let careComponentTypeIds = matcher.indices;
             for (let i = 0, len = careComponentTypeIds.length; i < len; i++) {
@@ -364,7 +370,6 @@ export module ecs {
          * @param isReAdd true-表示用户指定这个实体可能已经存在了该组件，那么再次add组件的时候会先移除该组件然后再添加一遍。false-表示不重复添加组件。
          */
         add<T extends IComponent>(ctor: ComponentConstructor<T>, isReAdd: boolean = false): T {
-
             let componentTypeId = ctor.tid;
             if (this.compTid2Ctor.has(componentTypeId)) {// 判断是否有该组件，如果有则先移除
                 if(isReAdd) {
@@ -466,69 +471,47 @@ export module ecs {
             return this.matchEntities[0];
         }
 
-        /**
-         * 与Group关联的System
-         */
-        private system: ComblockSystem | null = null;
+        private _enteredEntities: Map<number, E> | null = null;
+        private _removedEntities: Map<number, E> | null = null;
 
-        public onComponentAddOrRemove: (entity: E) => void;
-
-        constructor(matcher: IMatcher, system: ComblockSystem | null = null) {
+        constructor(matcher: IMatcher) {
             this.matcher = matcher;
-            this.system = system;
-            if(system) {
-                this.onComponentAddOrRemove = this.onComponentAddOrRemove1;
-            }
-            else {
-                this.onComponentAddOrRemove = this.onComponentAddOrRemove0;
-            }
         }
 
-        private onComponentAddOrRemove0(entity: E) {
+        public onComponentAddOrRemove(entity: E) {
             if (this.matcher.isMatch(entity)) { // Group只关心指定组件在实体身上的添加和删除动作。
                 this._matchEntities.set(entity.eid, entity);
                 this._entitiesCache = null;
                 this.count++;
-            }
-            else if (this._matchEntities.has(entity.eid)) { // 如果Group中有这个实体，但是这个实体已经不满足匹配规则，则从Group中移除该实体
-                this._matchEntities.delete(entity.eid);
-                this._entitiesCache = null;
-                this.count--;
-            }
-        }
 
-        /**
-         * 实体添加或删除组件回调
-         * @param entity 
-         */
-        private onComponentAddOrRemove1(entity: E) {
-            if (this.matcher.isMatch(entity)) { // Group只关心指定组件在实体身上的添加和删除动作。
-                this._matchEntities.set(entity.eid, entity);
-                this._entitiesCache = null;
-                this.count++;
-                
-                // @ts-ignore
-                this.system._enteredEntities?.set(entity.eid, entity);
-                // @ts-ignore
-                this.system._removedEntities?.delete(entity.eid);
+                if(this._enteredEntities) {
+                    this._enteredEntities.set(entity.eid, entity);
+                    this._removedEntities!.delete(entity.eid);
+                }
             }
             else if (this._matchEntities.has(entity.eid)) { // 如果Group中有这个实体，但是这个实体已经不满足匹配规则，则从Group中移除该实体
                 this._matchEntities.delete(entity.eid);
                 this._entitiesCache = null;
                 this.count--;
 
-                // @ts-ignore
-                this.system._enteredEntities?.delete(entity.eid);
-                // @ts-ignore
-                this.system._removedEntities?.set(entity.eid, entity);
+                if(this._enteredEntities) {
+                    this._enteredEntities.delete(entity.eid);
+                    this._removedEntities!.set(entity.eid, entity);
+                }
             }
+        }
+
+        public watchEntityEnterAndRemove(enteredEntities: Map<number, E>, removedEntities: Map<number, E>) {
+            this._enteredEntities = enteredEntities;
+            this._removedEntities = removedEntities;
         }
 
         clear() {
             this._matchEntities.clear();
             this._entitiesCache = null;
             this.count = 0;
-            this.system = null;
+            this._enteredEntities?.clear();
+            this._removedEntities?.clear();
         }
     }
 
@@ -736,8 +719,11 @@ export module ecs {
         protected group: Group<E>;
         protected dt: number = 0;
 
-        private _enteredEntities: Map<number, E> | null = null;
-        private _removedEntities: Map<number, E> | null = null;
+        private enteredEntities: Map<number, E> | null = null;
+        private removedEntities: Map<number, E> | null = null;
+
+        private hasEntityEnter: boolean = false;
+        private hasEntityRemove: boolean = false;
 
         private tmpExecute: ((dt: number) => void) | null = null;
         private execute!: (dt: number) => void;
@@ -749,32 +735,19 @@ export module ecs {
             let hasEntityRemove = hasOwnProperty.call(prototype, 'entityRemove');
             let hasFirstUpdate = hasOwnProperty.call(prototype, 'firstUpdate');
 
-            if(hasEntityEnter && hasEntityRemove) {
-                this.execute = this.execute3;
-            }
-            else if(hasEntityEnter && !hasEntityRemove) {
+            this.hasEntityEnter = hasEntityEnter;
+            this.hasEntityRemove = hasEntityRemove;
+
+            if(hasEntityEnter || hasEntityRemove) {
+                this.enteredEntities = new Map<number, E>();
+                this.removedEntities = new Map<number, E>();
+
                 this.execute = this.execute1;
-            }
-            else if(!hasEntityEnter && hasEntityRemove) {
-                this.execute = this.execute2;
+                this.group = createGroup(this.filter());
+                this.group.watchEntityEnterAndRemove(this.enteredEntities, this.removedEntities);
             }
             else {
                 this.execute = this.execute0;
-            }
-
-            if(hasEntityEnter) {
-                this._enteredEntities = new Map<number, E>();
-            }
-
-            if(hasEntityRemove) {
-                this._removedEntities = new Map<number, E>();
-            }
-
-            if(hasEntityEnter || hasEntityRemove) {
-                // @ts-ignore
-                this.group = createGroup(this.filter(), this);
-            }
-            else {
                 this.group = createGroup(this.filter());
             }
 
@@ -798,9 +771,9 @@ export module ecs {
             }
             this.dt = dt;
             // 处理刚进来的实体
-            if (this._enteredEntities!.size > 0) {
-                (this as unknown as IEntityEnterSystem).entityEnter(Array.from(this._enteredEntities!.values()) as E[]);
-                this._enteredEntities!.clear();
+            if (this.enteredEntities!.size > 0) {
+                (this as unknown as IEntityEnterSystem).entityEnter(Array.from(this.enteredEntities.values()) as E[]);
+                this.enteredEntities.clear();
             }
             (this as unknown as ISystemFirstUpdate).firstUpdate(this.group.matchEntities);
             this.execute = this.tmpExecute!;
@@ -822,58 +795,27 @@ export module ecs {
         }
 
         /**
-         * 如果有新的Entity加入，则先执行entityEnter，然后执行update
+         * 先执行entityRemove，再执行entityEnter，最后执行update。
          * @param dt 
          * @returns 
          */
         private execute1(dt: number): void {
-            if(this.group.count === 0) {
-                return;
-            }
-            this.dt = dt;
-            // 处理刚进来的实体
-            if (this._enteredEntities!.size > 0) {
-                (this as unknown as IEntityEnterSystem).entityEnter(Array.from(this._enteredEntities!.values()) as E[]);
-                this._enteredEntities!.clear();
-            }
-            this.update(this.group.matchEntities as E[]);
-        }
-
-        /**
-         * 如果有Entity被移除，则先执行entityRemove，然后执行update
-         * @param dt 
-         * @returns 
-         */
-        private execute2(dt: number): void {
-            if(this._removedEntities!.size > 0) {
-                (this as unknown as IEntityRemoveSystem).entityRemove(Array.from(this._removedEntities!.values()) as E[]);
-                this._removedEntities!.clear();
-            }
-            if(this.group.count === 0) {
-                return;
-            }
-            this.dt = dt;
-            this.update(this.group.matchEntities as E[]);
-        }
-
-        /**
-         * 先执行entityRemove，在执行entityEnter，最后执行update。
-         * @param dt 
-         * @returns 
-         */
-        private execute3(dt: number): void {
-            if(this._removedEntities!.size > 0) {
-                (this as unknown as IEntityRemoveSystem).entityRemove(Array.from(this._removedEntities!.values()) as E[]);
-                this._removedEntities!.clear();
+            if(this.removedEntities!.size > 0) {
+                if(this.hasEntityRemove) {
+                    (this as unknown as IEntityRemoveSystem).entityRemove(Array.from(this.removedEntities.values()) as E[]);
+                }
+                this.removedEntities.clear();
             }
             if(this.group.count === 0) {
                 return;
             }
             this.dt = dt;
             // 处理刚进来的实体
-            if (this._enteredEntities!.size > 0) {
-                (this as unknown as IEntityEnterSystem).entityEnter(Array.from(this._enteredEntities!.values()) as E[]);
-                this._enteredEntities!.clear();
+            if (this.enteredEntities!.size > 0) {
+                if(this.hasEntityEnter) {
+                    (this as unknown as IEntityEnterSystem).entityEnter(Array.from(this.enteredEntities.values()) as E[]);
+                }
+                this.enteredEntities.clear();
             }
             this.update(this.group.matchEntities as E[]);
         }
