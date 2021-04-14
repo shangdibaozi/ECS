@@ -149,7 +149,7 @@ export module ecs {
             eid2Entity.delete(entity.eid);
         }
         else {
-            console.warn('实体没有通过Context对象的createEntity创建或者该实体重复销毁', entity.eid);
+            console.warn('试图销毁不存在的实体！');
         }
     }
 
@@ -159,7 +159,7 @@ export module ecs {
      * @param groupType group的类型，s-表现ecs框架的类型，c-表示在用户自己脚本中创建的group类型
      */
     export function createGroup<E extends Entity = Entity>(matcher: IMatcher, system: ComblockSystem | null = null): Group<E> {
-        let key = `${matcher.getKey()}`;
+        let key = matcher.getKey();
         let group = groups.get(key);
         if (!group) {
             group = new Group(matcher, system);
@@ -281,7 +281,7 @@ export module ecs {
      * 获取单例组件
      * @param ctor 组件类
      */
-    export function getSinglton<T extends IComponent>(ctor: ComponentConstructor<T>) {
+    export function getSingleton<T extends IComponent>(ctor: ComponentConstructor<T>) {
         if (!tid2comp.has(ctor.tid)) {
             let comp = createEntityWithComp(ctor);
             tid2comp.set(ctor.tid, comp);
@@ -361,12 +361,19 @@ export module ecs {
          * 
          * 注意：不要直接new Component，new来的Component不会从Component的缓存池拿缓存的数据。
          * @param componentTypeId 组件id
+         * @param isReAdd true-表示用户指定这个实体可能已经存在了该组件，那么再次add组件的时候会先移除该组件然后再添加一遍。false-表示不重复添加组件。
          */
-        add<T extends IComponent>(ctor: ComponentConstructor<T>): T {
+        add<T extends IComponent>(ctor: ComponentConstructor<T>, isReAdd: boolean = false): T {
 
             let componentTypeId = ctor.tid;
-            if (this.mask.has(componentTypeId)) {// 判断是否有该组件，如果有则先移除
-                this.remove(ctor);
+            if (this.compTid2Ctor.has(componentTypeId)) {// 判断是否有该组件，如果有则先移除
+                if(isReAdd) {
+                    this.remove(ctor);
+                }
+                else {
+                    console.log(`已经存在组件：${ctor.compName}`);
+                    return this[ctor.compName];
+                }
             }
             this.mask.set(componentTypeId);
 
@@ -396,7 +403,7 @@ export module ecs {
         }
 
         has<T extends IComponent>(ctor: ComponentConstructor<T>): boolean {
-            return this.mask.has(ctor.tid);
+            return this.compTid2Ctor.has(ctor.tid);
         }
 
         remove<T extends IComponent>(ctor: ComponentConstructor<T>) {
