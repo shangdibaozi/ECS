@@ -1,7 +1,7 @@
 // 重构原则：如无必要，勿增实体。
 export module ecs {
     //#region 类型声明
-    type ComponentConstructor<T extends IComponent = IComponent> = {
+    export type ComponentConstructor<T extends IComponent = IComponent> = {
         /**
          * 每类组件的唯一id
          */
@@ -371,12 +371,16 @@ export module ecs {
          */
         add<T extends IComponent>(ctor: ComponentConstructor<T>, isReAdd: boolean = false): T {
             let componentTypeId = ctor.tid;
+            if(ctor.tid === -1) {
+                throw Error('组件未注册！');
+            }
             if (this.compTid2Ctor.has(componentTypeId)) {// 判断是否有该组件，如果有则先移除
                 if(isReAdd) {
                     this.remove(ctor);
                 }
                 else {
                     console.log(`已经存在组件：${ctor.compName}`);
+                    // @ts-ignore
                     return this[ctor.compName];
                 }
             }
@@ -602,6 +606,7 @@ export module ecs {
     class Matcher implements IMatcher {
         protected rules: BaseOf[] = [];
         protected _indices: number[] | null = null;
+        public isMatch!: (entity: Entity) => boolean;
         /**
          * 匹配器关注的组件索引。在创建Group时，Context根据组件id去给Group关联组件的添加和移除事件。
          */
@@ -611,6 +616,7 @@ export module ecs {
                 this.rules.forEach((rule) => {
                     Array.prototype.push.apply(this._indices, rule.indices);
                 });
+                this.bindMatchMethod();
             }
             return this._indices;
         }
@@ -672,21 +678,33 @@ export module ecs {
             return s;
         }
 
-        public isMatch(entity: Entity): boolean {
-            if (this.rules.length === 1) {
-                return this.rules[0].isMatch(entity);
+        private bindMatchMethod() {
+            if(this.rules.length === 1) {
+                this.isMatch = this.isMatch1;
             }
-            else if (this.rules.length === 2) {
-                return this.rules[0].isMatch(entity) && this.rules[1].isMatch(entity);
+            else if(this.rules.length === 2) {
+                this.isMatch = this.isMatch2;
             }
             else {
-                for (let rule of this.rules) {
-                    if (!rule.isMatch(entity)) {
-                        return false;
-                    }
-                }
-                return true;
+                this.isMatch = this.isMatchMore;
             }
+        }
+
+        private isMatch1(entity: Entity): boolean {
+            return this.rules[0].isMatch(entity);
+        }
+
+        private isMatch2(entity: Entity): boolean {
+            return this.rules[0].isMatch(entity) && this.rules[1].isMatch(entity);
+        }
+
+        private isMatchMore(entity: Entity): boolean {
+            for (let rule of this.rules) {
+                if (!rule.isMatch(entity)) {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 
@@ -761,6 +779,10 @@ export module ecs {
 
         }
 
+        onDestroy(): void {
+
+        }
+
         hasEntity(): boolean {
             return this.group.count > 0;
         }
@@ -772,8 +794,8 @@ export module ecs {
             this.dt = dt;
             // 处理刚进来的实体
             if (this.enteredEntities!.size > 0) {
-                (this as unknown as IEntityEnterSystem).entityEnter(Array.from(this.enteredEntities.values()) as E[]);
-                this.enteredEntities.clear();
+                (this as unknown as IEntityEnterSystem).entityEnter(Array.from(this.enteredEntities!.values()) as E[]);
+                this.enteredEntities!.clear();
             }
             (this as unknown as ISystemFirstUpdate).firstUpdate(this.group.matchEntities);
             this.execute = this.tmpExecute!;
@@ -802,9 +824,9 @@ export module ecs {
         private execute1(dt: number): void {
             if(this.removedEntities!.size > 0) {
                 if(this.hasEntityRemove) {
-                    (this as unknown as IEntityRemoveSystem).entityRemove(Array.from(this.removedEntities.values()) as E[]);
+                    (this as unknown as IEntityRemoveSystem).entityRemove(Array.from(this.removedEntities!.values()) as E[]);
                 }
-                this.removedEntities.clear();
+                this.removedEntities!.clear();
             }
             if(this.group.count === 0) {
                 return;
@@ -813,9 +835,9 @@ export module ecs {
             // 处理刚进来的实体
             if (this.enteredEntities!.size > 0) {
                 if(this.hasEntityEnter) {
-                    (this as unknown as IEntityEnterSystem).entityEnter(Array.from(this.enteredEntities.values()) as E[]);
+                    (this as unknown as IEntityEnterSystem).entityEnter(Array.from(this.enteredEntities!.values()) as E[]);
                 }
-                this.enteredEntities.clear();
+                this.enteredEntities!.clear();
             }
             this.update(this.group.matchEntities as E[]);
         }
@@ -851,9 +873,7 @@ export module ecs {
         }
 
         init() {
-            for (let i = 0; i < this.systemCnt; i++) {
-                this.executeSystemFlows[i].init();
-            }
+            this.executeSystemFlows.forEach(sys => sys.init());
         }
 
         execute(dt: number) {
@@ -861,6 +881,10 @@ export module ecs {
                 // @ts-ignore
                 this.executeSystemFlows[i].execute(dt);
             }
+        }
+
+        clear() {
+            this.executeSystemFlows.forEach(sys => sys.onDestroy());
         }
     }
 
