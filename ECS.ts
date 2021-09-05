@@ -13,7 +13,14 @@ export module ecs {
         new(): T;
     };
 
+    type Tag = {
+        tid: number;
+        compName: string;
+    }
+
     type ComponentAddOrRemove = (entity: Entity) => void;
+
+    export type ComponentType = ComponentConstructor<IComponent> | number;
     //#endregion
 
     //#region 注册组件
@@ -51,13 +58,15 @@ export module ecs {
     /**
      * 组件构造函数
      */
-    let componentConstructors: ComponentConstructor[] = [];
+    let componentConstructors: (ComponentConstructor | number)[] = [];
 
     /**
      * 每个组件的添加和删除的动作都要派送到“关心”它们的group上。goup对当前拥有或者之前（删除前）拥有该组件的实体进行组件规则判断。判断该实体是否满足group
      * 所期望的组件组合。
      */
      let componentAddOrRemove: Map<number, ComponentAddOrRemove[]> = new Map();
+
+     let tags: Map<number, string> = new Map();
 
     /**
      * 由于js打包会改变类名，所以这里必须手动传入组件的名称。
@@ -74,6 +83,31 @@ export module ecs {
             }
             else {
                 throw new Error(`重复注册组件： ${componentName}.`);
+            }
+        }
+    }
+
+    /**
+     * 添加tag
+     * 
+     * eg.
+     *      @registerTag()
+     *      class Tag {
+     *          static A: number;
+     *          static B: number
+     *      }
+     * @returns 
+     */
+    export function registerTag() {
+        return function(_class: any) {
+            let tid = compTid;
+            for(let k in _class) {
+                tid = compTid++;
+                _class[k] = tid;
+                componentConstructors.push(tid);
+                componentPools.set(tid, []);
+                componentAddOrRemove.set(tid, []);
+                tags.set(tid, k);
             }
         }
     }
@@ -119,7 +153,7 @@ export module ecs {
      * @param ctor
      */
     function createComponent<T extends IComponent>(ctor: ComponentConstructor<T>): T {
-        let component = componentPools.get(ctor.tid)!.pop() || new componentConstructors[ctor.tid];
+        let component = componentPools.get(ctor.tid)!.pop() || new (componentConstructors[ctor.tid] as ComponentConstructor);
         return component as T;
     }
 
@@ -136,10 +170,15 @@ export module ecs {
      * 指定多个组件创建实体，返回实体对象。
      * @param ctors 
      */
-    export function createEntityWithComps<E extends Entity = Entity>(...ctors: ComponentConstructor<IComponent>[]): E {
+    export function createEntityWithComps<E extends Entity = Entity>(...ctors: ComponentType[]): E {
         let entity = createEntity();
         for (let ctor of ctors) {
-            entity.add(ctor);
+            if(typeof(ctor) === "number") {
+                entity.addTag(ctor);
+            }
+            else {
+                entity.add(ctor);
+            }
         }
         return entity as E;
     }
@@ -247,7 +286,7 @@ export module ecs {
      * 进行添加操作引发Group重复添加实体。
      * @param args 
      */
-    export function allOf(...args: ComponentConstructor<IComponent>[]) {
+    export function allOf(...args: ComponentType[]) {
         return new Matcher().allOf(...args);
     }
 
@@ -255,7 +294,7 @@ export module ecs {
      * 组件间是或的关系，表示关注拥有任意一个这些组件的实体。
      * @param args 组件索引
      */
-    export function anyOf(...args: ComponentConstructor<IComponent>[]) {
+    export function anyOf(...args: ComponentType[]) {
         return new Matcher().anyOf(...args);
     }
 
@@ -266,7 +305,7 @@ export module ecs {
      *  不是特殊情况不建议使用onlyOf。因为onlyOf会监听所有组件的添加和删除事件。
      * @param args 组件索引
      */
-    export function onlyOf(...args: ComponentConstructor<IComponent>[]) {
+    export function onlyOf(...args: ComponentType[]) {
         return new Matcher().onlyOf(...args);
     }
 
@@ -277,7 +316,7 @@ export module ecs {
      *  ecs.excludeOf(A, B);表示不包含组件A或者组件B
      * @param args 
      */
-    export function excludeOf(...args: ComponentConstructor<IComponent>[]) {
+    export function excludeOf(...args: ComponentType[]) {
         return new Matcher().excludeOf(...args);
     }
 
@@ -356,7 +395,7 @@ export module ecs {
         /**
          * 当前实体身上附加的组件构造函数
          */
-        private compTid2Ctor: Map<number, ComponentConstructor<IComponent>> = new Map();
+        private compTid2Ctor: Map<number, ComponentType> = new Map();
 
         constructor() {}
 
@@ -400,9 +439,14 @@ export module ecs {
             return component;
         }
 
-        addComponents(...ctors: ComponentConstructor<IComponent>[]) {
+        addComponents(...ctors: ComponentType[]) {
             for(let ctor of ctors) {
-                this.add(ctor);
+                if(typeof(ctor) === "number") {
+                    this.addTag(ctor);
+                }
+                else {
+                    this.add(ctor);
+                }
             }
         }
 
@@ -432,11 +476,50 @@ export module ecs {
             }
         }
 
+        addTag(tag: number) {
+            if(tags.has(tag)) {
+                this.mask.set(tag);
+                this.compTid2Ctor.set(tag, tag);
+                let tagName = tags.get(tag)!;
+                // @ts-ignore
+                this[tagName] = tag;
+                broadcastComponentAddOrRemove(this, tag);
+            }
+            else {
+                throw Error('不存在的tag！');
+            }
+            return this;
+        }
+
+        hasTag(tag: number) {
+            return this.mask.has(tag);
+        }
+
+        removeTag(tag: number) {
+            if(this.mask.has(tag)) {
+                this.mask.delete(tag);
+                this.compTid2Ctor.delete(tag);
+                let tagName = tags.get(tag)!;
+                // @ts-ignore
+                this[tagName] = null;
+                broadcastComponentAddOrRemove(this, tag);
+            }
+        }
+
+        private _remove(comp: ComponentType) {
+            if(typeof(comp) === "number") {
+                this.removeTag(comp);
+            }
+            else {
+                this.remove(comp);
+            }
+        }
+
         /**
          * 销毁实体，实体会被回收到实体缓存池中。
          */
         destroy() {
-            this.compTid2Ctor.forEach(this.remove, this);
+            this.compTid2Ctor.forEach(this._remove, this);
             destroyEntity(this);
         }
     }
@@ -510,6 +593,19 @@ export module ecs {
             this._removedEntities = removedEntities;
         }
 
+        createEntity<E extends Entity = Entity>() {
+            let ent = createEntity<E>();
+            for(let idx of this.matcher.indices) {
+                if(typeof(componentConstructors[idx]) === "number") {
+                    ent.addTag(componentConstructors[idx] as number)
+                }
+                else {
+                    ent.add(componentConstructors[idx] as ComponentConstructor);
+                }
+            }
+            return ent;
+        }
+
         clear() {
             this._matchEntities.clear();
             this._entitiesCache = null;
@@ -522,18 +618,23 @@ export module ecs {
     abstract class BaseOf {
         protected mask = new Mask();
         public indices: number[] = [];
-        constructor(...args: ComponentConstructor<IComponent>[]) {
+        constructor(...args: ComponentType[]) {
             let componentTypeId = -1;
             let len = args.length;
             for (let i = 0; i < len; i++) {
-                componentTypeId = args[i].tid;
+                if(typeof(args[i]) === "number") {
+                    componentTypeId = args[i] as number;
+                }
+                else {
+                    componentTypeId = (args[i] as ComponentConstructor<IComponent>).tid;
+                }
                 if (componentTypeId == -1) {
                     throw Error('存在没有注册的组件！');
                 }
                 this.mask.set(componentTypeId);
 
-                if (this.indices.indexOf(args[i].tid) < 0) { // 去重
-                    this.indices.push(args[i].tid);
+                if (this.indices.indexOf(componentTypeId) < 0) { // 去重
+                    this.indices.push(componentTypeId);
                 }
             }
             if (len > 1) {
@@ -625,7 +726,7 @@ export module ecs {
          * 组件间是或的关系，表示关注拥有任意一个这些组件的实体。
          * @param args 组件索引
          */
-        public anyOf(...args: ComponentConstructor<IComponent>[]): Matcher {
+        public anyOf(...args: ComponentType[]): Matcher {
             this.rules.push(new AnyOf(...args));
             return this;
         }
@@ -634,7 +735,7 @@ export module ecs {
          * 组件间是与的关系，表示关注拥有所有这些组件的实体。
          * @param args 组件索引
          */
-        public allOf(...args: ComponentConstructor<IComponent>[]): Matcher {
+        public allOf(...args: ComponentType[]): Matcher {
             this.rules.push(new AllOf(...args));
             return this;
         }
@@ -646,9 +747,9 @@ export module ecs {
          *  不是特殊情况不建议使用onlyOf。因为onlyOf会监听所有组件的添加和删除事件。
          * @param args 组件索引
          */
-        public onlyOf(...args: ComponentConstructor<IComponent>[]): Matcher {
+        public onlyOf(...args: ComponentType[]): Matcher {
             this.rules.push(new AllOf(...args));
-            let otherTids: ComponentConstructor<IComponent>[] = [];
+            let otherTids: ComponentType[] = [];
             for (let ctor of componentConstructors) {
                 if (args.indexOf(ctor) < 0) {
                     otherTids.push(ctor);
@@ -662,7 +763,7 @@ export module ecs {
          * 不包含指定的任意一个组件
          * @param args 
          */
-        public excludeOf(...args: ComponentConstructor<IComponent>[]) {
+        public excludeOf(...args: ComponentType[]) {
             this.rules.push(new ExcludeOf(...args));
             return this;
         }

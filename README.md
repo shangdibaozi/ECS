@@ -17,6 +17,27 @@ export class HelloComponent extends ecs.IComponent {
     }
 }
 ```
+
+tag类组件
+```Typescript
+@ecs.registerTag()
+export class ECSTag {
+    static Tag1: number;
+    static Tag2: number;
+    static tag3: number;
+}
+```
+使用方法
+```Typescript
+ecs.createEntityWithComps(Comp1, ECSTag.Tag1)
+
+ent.hasTag(ECSTag.Tag1)
+
+ent.addTag(ECSTag.Tag2)
+
+ent.removeTag(ECSTag.Tag2)
+```
+
 ## ecs.register功能
 - 能通过```entity.Hello```获得组件对象；
 - 将组件的构造函数存入ecs上下文中，并且给该类组件分配一个组件id。
@@ -82,6 +103,11 @@ ecs.allOf(AComponent, BComponent).excludeOf(CComponent, DComponent);
 
 // 不同时包含CComponent和DComponent
 ecs.allOf(AComponent, BComponent).excludeOf(CComponent).excludeOf(DComponent);
+```
+
+### 直接查询并获得实体
+```Typescript
+ecs.query(ecs.allOf(Comp1, Comp2))
 ```
 
 ## 系统
