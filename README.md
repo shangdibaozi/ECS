@@ -26,9 +26,8 @@ export class ECSTag {
     static Tag2: number;
     static tag3: number;
 }
-```
-使用方法
-```Typescript
+
+// 相关使用方法
 ecs.createEntityWithComps(Comp1, ECSTag.Tag1)
 
 ent.hasTag(ECSTag.Tag1)
@@ -37,6 +36,43 @@ ent.addTag(ECSTag.Tag2)
 
 ent.removeTag(ECSTag.Tag2)
 ```
+
+“能力”类组件
+```Typescript
+@ecs.register('Test1Component')
+export class Test1Component extends ecs.IComponent {
+    data1: number = 1;
+    reset() {
+
+    }
+}
+
+@ecs.register('Test2Component')
+export class Test2Component extends ecs.IComponent {
+    data2: number = 1;
+    reset() {
+
+    }
+}
+
+@ecs.register('AbilityComponent')
+export class AbilityComponent extends ecs.IComponent  {
+    matcher: ecs.IMatcher = ecs.allOf(Test1Component, Test2Component);
+
+    cal() {
+        let t1Comp = this.ent.get(Test1Component);
+        let t2Comp = this.ent.get(Test2Component);
+        return t1Comp.data1 + t2Comp.data2;
+    }
+}
+
+let ent = ecs.createEntity();
+ent.add(Test1Component);
+ent.add(Test2Component); // 当实体身上的组件组合满足AbilityComponent的matcher时ecs系统会自动给实体添加AbilityComponent组件
+
+ent.remove(Test2Component); // 当实体身上的组件组合不满足时ecs系统会自动从实体身上移除AbilityComponent组件
+```
+
 
 ## ecs.register功能
 - 能通过```entity.Hello```获得组件对象；
@@ -177,6 +213,13 @@ export class MoveSystem extends ecs.ComblockSystem<AvatarEntity> implements ecs.
     filter(): ecs.Matcher {
         return ecs.allOf(MoveComponent, TransformComponent);
     }
+
+     // 实体第一次进入MoveSystem会进入此方法
+    entityEnter(entities: AvatarEntity[]) {
+        for(e of entities) {
+            e.Move.speed = 100;
+        }
+    }
     
     // 每帧都会更新
     update(entities: AvatarEntity[]) {
@@ -184,8 +227,8 @@ export class MoveSystem extends ecs.ComblockSystem<AvatarEntity> implements ecs.
             let moveComp = e.Move; // e.get(MoveComponent);
             lel position = e.Transform.position;
             
-            position.x += moveComp.speed.x * moveComp.speed * this.dt;
-            position.y += moveComp.speed.y * moveComp.speed * this.dt;
+            position.x += moveComp.heading.x * moveComp.speed * this.dt;
+            position.y += moveComp.heading.y * moveComp.speed * this.dt;
             
             e.Transform.angle = cc.misc.lerp(e.Transform.angle, Math.atan2(moveComp.speed.y, moveComp.speed.x) * cc.macro.DEG, dt);
         }
@@ -234,7 +277,7 @@ export class GameControllerBehaviour extends cc.Component {
     createAvatar(node: cc.Node) {
         let entity = ecs.createEntityWithComps<AvatarEntity>(NodeComponent, TransformComponent, MoveComponent);
         entity.Node.val = node;
-        entity.Move.speed = 100;
+        // entity.Move.speed = 100;
     }
 
     update(dt: number) {
