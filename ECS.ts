@@ -10,13 +10,12 @@ export module ecs {
          * 组件名称，可用作实体对象的属性名称。
          */
         compName: string;
+
+        matcher: IMatcher
+
         new(): T;
     };
-
-    type Tag = {
-        tid: number;
-        compName: string;
-    }
+    
 
     type ComponentAddOrRemove = (entity: Entity) => void;
 
@@ -43,6 +42,8 @@ export module ecs {
          * **不要偷懒，除非你能确定并保证组件在复用时，里面的数据是先赋值然后再使用。**
          */
         abstract reset(): void;
+
+        static matcher: IMatcher | null = null;
     }
 
     /**
@@ -80,6 +81,17 @@ export module ecs {
                 componentConstructors.push(ctor);
                 componentPools.set(ctor.tid, []);
                 componentAddOrRemove.set(ctor.tid, []);
+
+                if(ctor.matcher) {
+                    let listenAddMatcher = ctor.matcher as Matcher;
+                    let listenRemoveMather = listenAddMatcher.clone();
+                    listenAddMatcher.excludeOf(ctor);
+                    listenRemoveMather.allOf(ctor);
+                    groupListenAdd.set(listenAddMatcher.mid, ctor);
+                    groupListenRemove.set(listenRemoveMather.mid, ctor);
+                    createGroup(listenAddMatcher);
+                    createGroup(listenRemoveMather);
+                }
             }
             else {
                 throw new Error(`重复注册组件： ${componentName}.`);
@@ -130,7 +142,13 @@ export module ecs {
      * 
      * key是组件的筛选规则，一个筛选规则对应一个group
      */
-    let groups: Map<string, Group> = new Map();
+    let groups: Map<number, Group> = new Map();
+
+    /**
+     * 
+     */
+    let groupListenAdd: Map<number, ComponentConstructor> = new Map();
+    let groupListenRemove: Map<number, ComponentConstructor> = new Map();
 
     /**
      * 实体自增id
@@ -141,9 +159,12 @@ export module ecs {
      * 创建实体
      */
     export function createEntity<E extends Entity = Entity>(): E {
-        let entity = entityPool.pop() || new Entity();
-        // @ts-ignore
-        entity.eid = eid++;
+        let entity = entityPool.pop();
+        if(!entity) {
+            entity = new Entity();
+            // @ts-ignore
+            entity.eid = eid++; // 实体id也是有限的资源
+        }
         eid2Entity.set(entity.eid, entity);
         return entity as E;
     }
@@ -204,11 +225,10 @@ export module ecs {
      * @param matcher 实体筛选器
      */
     export function createGroup<E extends Entity = Entity>(matcher: IMatcher): Group<E> {
-        let key = matcher.getKey();
-        let group = groups.get(key);
+        let group = groups.get(matcher.mid);
         if (!group) {
             group = new Group(matcher);
-            groups.set(key, group);
+            groups.set(matcher.mid, group);
             let careComponentTypeIds = matcher.indices;
             for (let i = 0, len = careComponentTypeIds.length; i < len; i++) {
                 componentAddOrRemove.get(careComponentTypeIds[i])!.push(group.onComponentAddOrRemove.bind(group));
@@ -223,7 +243,7 @@ export module ecs {
      * @returns 
      */
     export function query<E extends Entity = Entity>(matcher: IMatcher): E[] {
-        let group = groups.get(matcher.getKey());
+        let group = groups.get(matcher.mid);
         if(!group) {
             group = createGroup(matcher);
             eid2Entity.forEach(group.onComponentAddOrRemove, group);
@@ -388,7 +408,7 @@ export module ecs {
         /**
          * 实体唯一标识，不要手动修改。
          */
-        public readonly eid: number = -1;
+        public eid: number = -1;
 
         private mask = new Mask();
 
@@ -575,6 +595,11 @@ export module ecs {
                     this._enteredEntities.set(entity.eid, entity);
                     this._removedEntities!.delete(entity.eid);
                 }
+
+                // 添加“能力”组件
+                if(groupListenAdd.has(this.matcher.mid)) {
+                    entity.add(groupListenAdd.get(this.matcher.mid));
+                }
             }
             else if (this._matchEntities.has(entity.eid)) { // 如果Group中有这个实体，但是这个实体已经不满足匹配规则，则从Group中移除该实体
                 this._matchEntities.delete(entity.eid);
@@ -585,25 +610,16 @@ export module ecs {
                     this._enteredEntities.delete(entity.eid);
                     this._removedEntities!.set(entity.eid, entity);
                 }
+
+                if(groupListenRemove.has(this.matcher.mid)) {
+                    entity.remove(groupListenRemove.get(this.matcher.mid));
+                }
             }
         }
 
         public watchEntityEnterAndRemove(enteredEntities: Map<number, E>, removedEntities: Map<number, E>) {
             this._enteredEntities = enteredEntities;
             this._removedEntities = removedEntities;
-        }
-
-        createEntity<E extends Entity = Entity>() {
-            let ent = createEntity<E>();
-            for(let idx of this.matcher.indices) {
-                if(typeof(componentConstructors[idx]) === "number") {
-                    ent.addTag(componentConstructors[idx] as number)
-                }
-                else {
-                    ent.add(componentConstructors[idx] as ComponentConstructor);
-                }
-            }
-            return ent;
         }
 
         clear() {
@@ -695,10 +711,13 @@ export module ecs {
     }
 
     export interface IMatcher {
+        mid: number;
         indices: number[];
-        getKey(): string;
+        key: string;
         isMatch(entity: Entity): boolean;
     }
+
+    let macherId: number = 1;
 
     /**
      * 筛选规则间是“与”的关系
@@ -708,6 +727,27 @@ export module ecs {
         protected rules: BaseOf[] = [];
         protected _indices: number[] | null = null;
         public isMatch!: (entity: Entity) => boolean;
+        public mid: number = -1;
+
+        private _key: string | null = null;
+        public get key(): string {
+            if(!this._key) {
+                let s = '';
+                for (let i = 0; i < this.rules.length; i++) {
+                    s += this.rules[i].getKey()
+                    if (i < this.rules.length - 1) {
+                        s += ' && '
+                    }
+                }
+                this._key = s;
+            }
+            return this._key;
+        }
+
+        constructor() {
+            this.mid = macherId++;
+        }
+
         /**
          * 匹配器关注的组件索引。在创建Group时，Context根据组件id去给Group关联组件的添加和移除事件。
          */
@@ -768,17 +808,6 @@ export module ecs {
             return this;
         }
 
-        public getKey(): string {
-            let s = '';
-            for (let i = 0; i < this.rules.length; i++) {
-                s += this.rules[i].getKey()
-                if (i < this.rules.length - 1) {
-                    s += ' && '
-                }
-            }
-            return s;
-        }
-
         private bindMatchMethod() {
             if(this.rules.length === 1) {
                 this.isMatch = this.isMatch1;
@@ -806,6 +835,13 @@ export module ecs {
                 }
             }
             return true;
+        }
+
+        public clone(): Matcher {
+            let newMatcher = new Matcher();
+            newMatcher.mid = macherId++;
+            this.rules.forEach(rule => newMatcher.rules.push(rule));
+            return newMatcher;
         }
     }
 
