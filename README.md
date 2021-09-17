@@ -57,7 +57,7 @@ export class Test2Component extends ecs.IComponent {
 
 @ecs.register('AbilityComponent')
 export class AbilityComponent extends ecs.IComponent  {
-    matcher: ecs.IMatcher = ecs.allOf(Test1Component, Test2Component);
+    static matcher: ecs.IMatcher = ecs.allOf(Test1Component, Test2Component);
 
     cal() {
         let t1Comp = this.ent.get(Test1Component);
