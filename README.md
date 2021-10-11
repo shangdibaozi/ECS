@@ -30,53 +30,19 @@ export class ECSTag {
 // 相关使用方法
 ecs.createEntityWithComps(Comp1, ECSTag.Tag1)
 
-ent.hasTag(ECSTag.Tag1)
+ent.has(ECSTag.Tag1)
 
-ent.addTag(ECSTag.Tag2)
+ent.add(ECSTag.Tag2)
 
-ent.removeTag(ECSTag.Tag2)
+ent.remove(ECSTag.Tag2)
 ```
-
-“能力”类组件
-```Typescript
-@ecs.register('Test1Component')
-export class Test1Component extends ecs.IComponent {
-    data1: number = 1;
-    reset() {
-
-    }
-}
-
-@ecs.register('Test2Component')
-export class Test2Component extends ecs.IComponent {
-    data2: number = 1;
-    reset() {
-
-    }
-}
-
-@ecs.register('AbilityComponent')
-export class AbilityComponent extends ecs.IComponent  {
-    matcher: ecs.IMatcher = ecs.allOf(Test1Component, Test2Component);
-
-    cal() {
-        let t1Comp = this.ent.get(Test1Component);
-        let t2Comp = this.ent.get(Test2Component);
-        return t1Comp.data1 + t2Comp.data2;
-    }
-}
-
-let ent = ecs.createEntity();
-ent.add(Test1Component);
-ent.add(Test2Component); // 当实体身上的组件组合满足AbilityComponent的matcher时ecs系统会自动给实体添加AbilityComponent组件
-
-ent.remove(Test2Component); // 当实体身上的组件组合不满足时ecs系统会自动从实体身上移除AbilityComponent组件
-```
-
 
 ## ecs.register功能
 - 能通过```entity.Hello```获得组件对象；
 - 将组件的构造函数存入ecs上下文中，并且给该类组件分配一个组件id。
+
+## ecs.registerTag
+- tag类组件必须用registerTag来装饰
 
 ## 实体
 为了能利用Typescript的类型提示机制，在使用实体的时候需要用户自己继承ecs.Entity。
@@ -86,31 +52,43 @@ export class HelloEntity extends ecs.Entity {
 }
 ```
 
-添加组件：
+- 添加组件：
 ```TypeScript
 entity.add(HelloComponent); // 添加组件时会优先从组件缓存池中获取无用的组件对象，如果没有才会新创建一个组件对象
 ```
 
-删除组件：
+- 添加组件对象：注意，外部创建的组件对象ecs系统不负责回收，需要用户自己管理该组件对象的声明周期。
+```Typescript
+let compObj = new HelloComponent();
+entity.add(compObj)
+```
+
+- 删除组件：
 ```TypeScript
 entity.remove(HelloComponent); // 组件对象会从实体身上移除并放入组件缓存池中
 ```
 
-获得组件对象：
+- 删除组件但不删除组件对象：实际开发中，组件身上有很多属性，如果删除了后面再添加，属性值还原是个麻烦的问题，
+remove方法可以删除组件，但是不真正从实体身上移除该组件对象，这样下次重新添加组件时还是会添加那个组件对象。
+```Typescript
+entity.remove(HelloComponent, false)
+```
+
+- 获得组件对象
 ```TypeScript
 1、entity.Hello; // 见上方自定义实体操作
 
 2、entity.get(HelloComponent);
 ```
 
-判断是否拥有组件：
+- 判断是否拥有组件：
 ```TypeScript
 1、entity.has(HelloComponent);
 
 2、!!entity.Hello;
 ```
 
-销毁实体：
+- 销毁实体：
 ```TypeScript
 entity.destroy() // 销毁实体时会先删除实体身上的所有组件，然后将实体放入实体缓存池中
 ```
@@ -286,6 +264,113 @@ export class GameControllerBehaviour extends cc.Component {
 }
 
 ```
+
+# 和Cocos Creator的组件混合使用
+## 创建基类
+```Typescript
+import { Component, _decorator } from "cc";
+import { ecs } from "../../../Libs/ECS";
+const { ccclass, property } = _decorator;
+
+@ccclass('CCComp')
+export abstract class CCComp extends Component implements ecs.IComp {
+    
+    static tid: number = -1;
+    static compName: string;
+
+    canRecycle: boolean;
+    ent: ecs.Entity;
+
+    onLoad() {
+        this.ent = ecs.createEntity();
+        this.ent.add(this);    
+    }
+
+    abstract reset(): void;
+}
+```
+
+## 创建ecs组件并且赋予序列化的功能，这样就能在Cocos Creator的“属性检查器”上修改参数
+```Typescript
+import { _decorator, toDegree, v3, Node, Vec3 } from "cc";
+import { ecs } from "../../../Libs/ECS";
+const { ccclass, property } = _decorator;
+
+let outV3 = v3();
+@ccclass('MovementComponent')
+@ecs.register('Movement')
+export class MovementComponent extends ecs.Comp {
+    pos: Vec3 = v3();
+    angle: number = 0;
+    speed: number = 0;
+
+    @property
+    acceleration: number = 0;
+
+    @property
+    private _maxSpeed: number = 0;
+    @property
+    set maxSpeed(val: number) {
+        this._maxSpeed = val;
+    }
+    get maxSpeed() {
+        return this._maxSpeed;
+    }
+
+    @property
+    heading: Vec3 = v3();
+    
+    @property
+    targetHeading: Vec3 = v3();
+
+    reset() {
+
+    }
+
+    update(dt: number) {
+        if(!Vec3.equals(this.heading, this.targetHeading, 0.01)) {
+            Vec3.subtract(outV3, this.targetHeading, this.heading);
+            outV3.multiplyScalar(0.025);
+            this.heading.add(outV3);
+            this.heading.normalize();
+            this.angle = toDegree(Math.atan2(this.heading.y, this.heading.x)) - 90;
+        }
+        
+        this.speed = Math.min(this.speed + this.acceleration * dt, this._maxSpeed);
+
+        this.pos.add3f(this.heading.x * this.speed * dt, this.heading.y * this.speed * dt, 0);
+    }
+
+    calcAngle() {
+        this.angle = toDegree(Math.atan2(this.heading.y, this.heading.x)) - 90;
+        return this.angle;
+    }
+}
+
+
+```
+
+## 创建面向Cocos Creator的组件
+```Typescript
+import { Component, _decorator } from "cc";
+const { ccclass, property } = _decorator;
+@ccclass('Player')
+@ecs.register('Player', false)
+export class Player extends CCComp {
+    @property({
+        type: MovementComponent
+    })
+    movement: MovementComponent;
+
+    onLoad() {
+        super.onLoad();
+
+        // 添加MovementComponent组件对象
+        this.ent.add(this.movement);
+    }
+}
+```
+![](./imgs/cc_inspector.png)
 
 # 调试
 添加如下代码

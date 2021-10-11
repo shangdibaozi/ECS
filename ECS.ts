@@ -1,55 +1,59 @@
 // 重构原则：如无必要，勿增实体。
 export module ecs {
-    //#region 类型声明
-    export type ComponentConstructor<T extends IComponent = IComponent> = {
-        /**
-         * 每类组件的唯一id
-         */
-        tid: number;
-        /**
-         * 组件名称，可用作实体对象的属性名称。
-         */
-        compName: string;
+    export interface IComp {
+        canRecycle: boolean;
+        ent: Entity;
 
-        matcher: IMatcher
+        reset(): void;
+    }
 
+    export interface CompCtor<T> {
         new(): T;
-    };
-    
+        tid: number;
+        compName: string;
+    }
 
-    type ComponentAddOrRemove = (entity: Entity) => void;
-
-    export type ComponentType = ComponentConstructor<IComponent> | number;
-    //#endregion
-
-    //#region 注册组件
     /**
      * 组件里面只放数据可能在实际写代码的时候比较麻烦。如果是单纯对组件内的数据操作可以在组件里面写方法。
      */
-    export abstract class IComponent {
+    export abstract class Comp implements IComp {
         /**
          * 组件的类型id，-1表示未给该组件分配id
          */
-        static tid: number = -1;
-        static compName: string;
-        /**
-         * 拥有该组件的实体
-         */
-        ent!: ecs.Entity;
-        /**
-         * 组件被回收时会调用这个接口。可以在这里重置数据，或者解除引用。
-         * 
-         * **不要偷懒，除非你能确定并保证组件在复用时，里面的数据是先赋值然后再使用。**
-         */
-        abstract reset(): void;
+         static tid: number = -1;
+         static compName: string;
+         /**
+          * 拥有该组件的实体
+          */
+         ent!: Entity;
 
-        static matcher: IMatcher | null = null;
+         /**
+          * 是否可回收组件对象，默认情况下都是可回收的。
+          * 如果该组件对象是由ecs系统外部创建的，则不可回收，需要用户自己手动进行回收。
+          */
+          canRecycle: boolean = true;
+
+         /**
+          * 组件被回收时会调用这个接口。可以在这里重置数据，或者解除引用。
+          * 
+          * **不要偷懒，除非你能确定并保证组件在复用时，里面的数据是先赋值然后再使用。**
+          */
+         abstract reset(): void;
     }
+
+    //#region 类型声明
+
+    type CompAddOrRemove = (entity: Entity) => void;
+
+    export type CompType<T> = CompCtor<T> | number;
+    //#endregion
+
+    //#region 注册组件
 
     /**
      * 组件缓存池
      */
-    let componentPools: Map<number, IComponent[]> = new Map();
+    let compPools: Map<number, IComp[]> = new Map();
 
     /**
      * 组件类型id
@@ -59,42 +63,37 @@ export module ecs {
     /**
      * 组件构造函数
      */
-    let componentConstructors: (ComponentConstructor | number)[] = [];
+    let compCtors: (CompCtor<any> | number)[] = [];
 
     /**
      * 每个组件的添加和删除的动作都要派送到“关心”它们的group上。goup对当前拥有或者之前（删除前）拥有该组件的实体进行组件规则判断。判断该实体是否满足group
      * 所期望的组件组合。
      */
-     let componentAddOrRemove: Map<number, ComponentAddOrRemove[]> = new Map();
+     let compAddOrRemove: Map<number, CompAddOrRemove[]> = new Map();
 
      let tags: Map<number, string> = new Map();
 
     /**
-     * 由于js打包会改变类名，所以这里必须手动传入组件的名称。
-     * @param componentName 
+     * 注册组件到ecs系统中
+     * @param compName 由于js打包会改变类名，所以这里必须手动传入组件的名称。
+     * @param canNew 标识是否可以new对象。想继承自Cocos Creator的组件就不能去new，需要写成@ecs.register('name', false)
      */
-    export function register(componentName: string) {
-        return function (ctor: ComponentConstructor) {
+    export function register<T>(compName: string, canNew: boolean = true) {
+        return function (ctor: CompCtor<T>) {
             if (ctor.tid === -1) {
                 ctor.tid = compTid++;
-                ctor.compName = componentName;
-                componentConstructors.push(ctor);
-                componentPools.set(ctor.tid, []);
-                componentAddOrRemove.set(ctor.tid, []);
-
-                if(ctor.matcher) {
-                    let listenAddMatcher = ctor.matcher as Matcher;
-                    let listenRemoveMather = listenAddMatcher.clone();
-                    listenAddMatcher.excludeOf(ctor);
-                    listenRemoveMather.allOf(ctor);
-                    groupListenAdd.set(listenAddMatcher.mid, ctor);
-                    groupListenRemove.set(listenRemoveMather.mid, ctor);
-                    createGroup(listenAddMatcher);
-                    createGroup(listenRemoveMather);
+                ctor.compName = compName;
+                if(canNew) {
+                    compCtors.push(ctor);
+                    compPools.set(ctor.tid, []);
                 }
+                else {
+                    compCtors.push(null);
+                }
+                compAddOrRemove.set(ctor.tid, []);
             }
             else {
-                throw new Error(`重复注册组件： ${componentName}.`);
+                throw new Error(`重复注册组件： ${compName}.`);
             }
         }
     }
@@ -116,9 +115,9 @@ export module ecs {
             for(let k in _class) {
                 tid = compTid++;
                 _class[k] = tid;
-                componentConstructors.push(tid);
-                componentPools.set(tid, []);
-                componentAddOrRemove.set(tid, []);
+                compCtors.push(tid);
+                compPools.set(tid, []);
+                compAddOrRemove.set(tid, []);
                 tags.set(tid, k);
             }
         }
@@ -145,12 +144,6 @@ export module ecs {
     let groups: Map<number, Group> = new Map();
 
     /**
-     * 
-     */
-    let groupListenAdd: Map<number, ComponentConstructor> = new Map();
-    let groupListenRemove: Map<number, ComponentConstructor> = new Map();
-
-    /**
      * 实体自增id
      */
     let eid = 1;
@@ -173,8 +166,11 @@ export module ecs {
      * 创建组件对象
      * @param ctor
      */
-    function createComponent<T extends IComponent>(ctor: ComponentConstructor<T>): T {
-        let component = componentPools.get(ctor.tid)!.pop() || new (componentConstructors[ctor.tid] as ComponentConstructor);
+    function createComp<T extends IComp>(ctor: CompCtor<T>): T {
+        if(!compCtors[ctor.tid]) {
+            throw Error(`没有找到该组件的构造函数，检查${ctor.compName}是否为不可构造的组件`);
+        }
+        let component = compPools.get(ctor.tid)!.pop() || new (compCtors[ctor.tid] as CompCtor<T>);
         return component as T;
     }
 
@@ -182,7 +178,7 @@ export module ecs {
      * 指定一个组件创建实体，返回组件对象。
      * @param ctor 
      */
-    export function createEntityWithComp<T extends IComponent>(ctor: ComponentConstructor<T>): T {
+    export function createEntityWithComp<T extends IComp>(ctor: CompCtor<T>): T {
         let entity = createEntity();
         return entity.add(ctor);
     }
@@ -191,16 +187,9 @@ export module ecs {
      * 指定多个组件创建实体，返回实体对象。
      * @param ctors 
      */
-    export function createEntityWithComps<E extends Entity = Entity>(...ctors: ComponentType[]): E {
+    export function createEntityWithComps<E extends Entity = Entity>(...ctors: CompType<IComp>[]): E {
         let entity = createEntity();
-        for (let ctor of ctors) {
-            if(typeof(ctor) === "number") {
-                entity.addTag(ctor);
-            }
-            else {
-                entity.add(ctor);
-            }
-        }
+        entity.addComponents(...ctors);
         return entity as E;
     }
 
@@ -230,8 +219,8 @@ export module ecs {
             group = new Group(matcher);
             groups.set(matcher.mid, group);
             let careComponentTypeIds = matcher.indices;
-            for (let i = 0, len = careComponentTypeIds.length; i < len; i++) {
-                componentAddOrRemove.get(careComponentTypeIds[i])!.push(group.onComponentAddOrRemove.bind(group));
+            for (let i = 0; i < careComponentTypeIds.length; i++) {
+                compAddOrRemove.get(careComponentTypeIds[i])!.push(group.onComponentAddOrRemove.bind(group));
             }
         }
         return group as unknown as Group<E>;
@@ -261,7 +250,7 @@ export module ecs {
         groups.forEach((group) => {
             group.clear();
         });
-        componentAddOrRemove.forEach(callbackLst => {
+        compAddOrRemove.forEach(callbackLst => {
             callbackLst.length = 0;
         });
         eid2Entity.clear();
@@ -273,8 +262,8 @@ export module ecs {
      * @param entity 实体对象
      * @param componentTypeId 组件类型id
      */
-    function broadcastComponentAddOrRemove(entity: Entity, componentTypeId: number) {
-        let events = componentAddOrRemove.get(componentTypeId);
+    function broadcastCompAddOrRemove(entity: Entity, componentTypeId: number) {
+        let events = compAddOrRemove.get(componentTypeId);
         for (let i = events!.length - 1; i >= 0; i--) {
             events![i](entity);
         }
@@ -306,7 +295,7 @@ export module ecs {
      * 进行添加操作引发Group重复添加实体。
      * @param args 
      */
-    export function allOf(...args: ComponentType[]) {
+    export function allOf(...args: CompType<IComp>[]) {
         return new Matcher().allOf(...args);
     }
 
@@ -314,7 +303,7 @@ export module ecs {
      * 组件间是或的关系，表示关注拥有任意一个这些组件的实体。
      * @param args 组件索引
      */
-    export function anyOf(...args: ComponentType[]) {
+    export function anyOf(...args: CompType<IComp>[]) {
         return new Matcher().anyOf(...args);
     }
 
@@ -325,7 +314,7 @@ export module ecs {
      *  不是特殊情况不建议使用onlyOf。因为onlyOf会监听所有组件的添加和删除事件。
      * @param args 组件索引
      */
-    export function onlyOf(...args: ComponentType[]) {
+    export function onlyOf(...args: CompType<IComp>[]) {
         return new Matcher().onlyOf(...args);
     }
 
@@ -336,22 +325,33 @@ export module ecs {
      *  ecs.excludeOf(A, B);表示不包含组件A或者组件B
      * @param args 
      */
-    export function excludeOf(...args: ComponentType[]) {
+    export function excludeOf(...args: CompType<IComp>[]) {
         return new Matcher().excludeOf(...args);
     }
 
     //#region 单例组件
-    let tid2comp: Map<number, IComponent> = new Map();
+    let tid2comp: Map<number, IComp> = new Map();
     /**
      * 获取单例组件
      * @param ctor 组件类
      */
-    export function getSingleton<T extends IComponent>(ctor: ComponentConstructor<T>) {
+    export function getSingleton<T extends IComp>(ctor: CompCtor<T>) {
         if (!tid2comp.has(ctor.tid)) {
-            let comp = createEntityWithComp(ctor);
+            let comp = createEntityWithComp(ctor) as T;
             tid2comp.set(ctor.tid, comp);
         }
         return tid2comp.get(ctor.tid) as T;
+    }
+
+    /**
+     * 注册单例。主要用于那些不能手动创建对象的组件
+     * @param obj 
+     */
+    export function addSingleton(obj: IComp) {
+        let tid = (obj.constructor as CompCtor<IComp>).tid;
+        if(!tid2comp.has(tid)) {
+            tid2comp.set(tid, obj);
+        }
     }
     //#endregion
 
@@ -415,7 +415,9 @@ export module ecs {
         /**
          * 当前实体身上附加的组件构造函数
          */
-        private compTid2Ctor: Map<number, ComponentType> = new Map();
+        private compTid2Ctor: Map<number, CompType<IComp>> = new Map();
+
+        private compTid2Obj: Map<number, IComp> = new Map();
 
         constructor() {}
 
@@ -428,111 +430,152 @@ export module ecs {
          * @param componentTypeId 组件id
          * @param isReAdd true-表示用户指定这个实体可能已经存在了该组件，那么再次add组件的时候会先移除该组件然后再添加一遍。false-表示不重复添加组件。
          */
-        add<T extends IComponent>(ctor: ComponentConstructor<T>, isReAdd: boolean = false): T {
-            let componentTypeId = ctor.tid;
-            if(ctor.tid === -1) {
-                throw Error('组件未注册！');
-            }
-            if (this.compTid2Ctor.has(componentTypeId)) {// 判断是否有该组件，如果有则先移除
-                if(isReAdd) {
-                    this.remove(ctor);
+        add<T extends IComp>(obj: T): Entity;
+        add(ctor: number, isReAdd?: boolean): Entity;
+        add<T extends IComp>(ctor: CompCtor<T>, isReAdd?: boolean): T;
+        add<T extends IComp>(ctor: CompType<T>, isReAdd?: boolean): T;
+        add<T extends IComp>(ctor: CompType<T> | T, isReAdd: boolean = false): T | Entity  {
+            console.log('typeof: ', typeof ctor);
+            if(typeof ctor === 'function') {
+                let compTid = ctor.tid;
+                if(ctor.tid === -1) {
+                    throw Error('组件未注册！');
+                }
+                if (this.compTid2Ctor.has(compTid)) {// 判断是否有该组件，如果有则先移除
+                    if(isReAdd) {
+                        this.remove(ctor);
+                    }
+                    else {
+                        console.log(`已经存在组件：${ctor.compName}`);
+                        // @ts-ignore
+                        return this[ctor.compName] as T;
+                    }
+                }
+                this.mask.set(compTid);
+    
+                let comp: T;
+                if(this.compTid2Obj.has(compTid)) {
+                    comp = this.compTid2Obj.get(compTid) as T;
+                    this.compTid2Obj.delete(compTid);
                 }
                 else {
-                    console.log(`已经存在组件：${ctor.compName}`);
+                    // 创建组件对象
+                    comp = createComp(ctor) as T;
+                }
+                // 将组件对象直接附加到实体对象身上，方便直接获取。
+                // @ts-ignore
+                this[ctor.compName] = comp;
+                this.compTid2Ctor.set(compTid, ctor);
+                comp.ent = this;
+                // 广播实体添加组件的消息
+                broadcastCompAddOrRemove(this, compTid);
+    
+                return comp;
+            }
+            else if(typeof ctor === 'number') {
+                if(tags.has(ctor)) {
+                    this.mask.set(ctor);
+                    this.compTid2Ctor.set(ctor, ctor);
+                    let tagName = tags.get(ctor)!;
                     // @ts-ignore
-                    return this[ctor.compName];
-                }
-            }
-            this.mask.set(componentTypeId);
-
-            // 创建组件对象
-            let component = createComponent(ctor);
-            // 将组件对象直接附加到实体对象身上，方便直接获取。
-            // @ts-ignore
-            this[ctor.compName] = component;
-            this.compTid2Ctor.set(componentTypeId, ctor);
-            // 广播实体添加组件的消息
-            broadcastComponentAddOrRemove(this, componentTypeId);
-
-            component.ent = this;
-
-            return component;
-        }
-
-        addComponents(...ctors: ComponentType[]) {
-            for(let ctor of ctors) {
-                if(typeof(ctor) === "number") {
-                    this.addTag(ctor);
+                    this[tagName] = ctor;
+                    broadcastCompAddOrRemove(this, ctor);
                 }
                 else {
-                    this.add(ctor);
+                    throw Error('不存在的tag！');
                 }
-            }
-        }
-
-        get<T extends IComponent>(ctor: ComponentConstructor<T>): T {
-            // @ts-ignore
-            return this[ctor.compName];
-        }
-
-        has<T extends IComponent>(ctor: ComponentConstructor<T>): boolean {
-            return this.compTid2Ctor.has(ctor.tid);
-        }
-
-        remove<T extends IComponent>(ctor: ComponentConstructor<T>) {
-            let componentTypeId = ctor.tid;
-            if (this.mask.has(componentTypeId)) {
-                // @ts-ignore
-                (this[ctor.compName] as IComponent).reset();
-                // @ts-ignore
-                (this[ctor.compName] as IComponent).ent = null;
-                // @ts-ignore
-                componentPools.get(componentTypeId).push(this[ctor.compName]);
-                // @ts-ignore
-                this[ctor.compName] = null;
-                this.mask.delete(componentTypeId);
-                broadcastComponentAddOrRemove(this, componentTypeId);
-                this.compTid2Ctor.delete(componentTypeId);
-            }
-        }
-
-        addTag(tag: number) {
-            if(tags.has(tag)) {
-                this.mask.set(tag);
-                this.compTid2Ctor.set(tag, tag);
-                let tagName = tags.get(tag)!;
-                // @ts-ignore
-                this[tagName] = tag;
-                broadcastComponentAddOrRemove(this, tag);
+                return this;
             }
             else {
-                throw Error('不存在的tag！');
+                let tmpCtor = (ctor.constructor as CompCtor<T>);
+                let compTid = tmpCtor.tid;
+                // console.assert(compTid !== -1 || !compTid, '组件未注册！');
+                // console.assert(this.compTid2Ctor.has(compTid), '已存在该组件！');
+                if(compTid === -1 || !compTid) {
+                    throw Error('组件未注册！');
+                }
+                if(this.compTid2Ctor.has(compTid)) {
+                    throw Error('已经存在该组件！');
+                }
+                
+                this.mask.set(compTid);
+                this[tmpCtor.compName] = ctor;
+                this.compTid2Ctor.set(compTid, tmpCtor);
+                ctor.ent = this;
+                ctor.canRecycle = false;
+                broadcastCompAddOrRemove(this, compTid);
+                return this;
+            }
+        }
+
+        addComponents<T extends IComp>(...ctors: CompType<T>[]) {
+            for(let ctor of ctors) {
+                this.add(ctor);
             }
             return this;
         }
 
-        hasTag(tag: number) {
-            return this.mask.has(tag);
+        get<T extends IComp>(ctor: CompCtor<T>): T {
+            // @ts-ignore
+            return this[ctor.compName];
         }
 
-        removeTag(tag: number) {
-            if(this.mask.has(tag)) {
-                this.mask.delete(tag);
-                this.compTid2Ctor.delete(tag);
-                let tagName = tags.get(tag)!;
-                // @ts-ignore
-                this[tagName] = null;
-                broadcastComponentAddOrRemove(this, tag);
-            }
-        }
-
-        private _remove(comp: ComponentType) {
-            if(typeof(comp) === "number") {
-                this.removeTag(comp);
+        has(ctor: CompType<IComp>): boolean {
+            if(typeof ctor == "number") {
+                return this.mask.has(ctor);
             }
             else {
-                this.remove(comp);
+                return this.compTid2Ctor.has(ctor.tid);
             }
+        }
+
+        /**
+         * 
+         * @param ctor 组件构造函数或者组件Tag
+         * @param isRecycle 是否回收该组件对象。对于有些组件上有大量数据，当要描述移除组件但是不想清除组件上的数据是可以
+         * 设置该参数为false，这样该组件对象会缓存在实体身上，下次重新添加组件时会将该组件对象添加回来，不会重新从组件缓存
+         * 池中拿一个组件来用。
+         */
+        remove(ctor: CompType<IComp>, isRecycle: boolean = true) {
+            let componentTypeId = -1;
+            let compName = '';
+            let hasComp = false;
+            if(typeof ctor === "number") {
+                componentTypeId = ctor;
+                if(this.mask.has(ctor)) {
+                    hasComp = true;
+                    compName = tags.get(ctor)!;
+                }
+            }
+            else {
+                componentTypeId = ctor.tid;
+                compName = ctor.compName;
+                if (this.mask.has(componentTypeId)) {
+                    hasComp = true;
+                    let comp = this[ctor.compName] as IComp;
+                    comp.ent = null;
+                    if(isRecycle) {
+                        comp.reset();
+                        if(comp.canRecycle) {
+                            compPools.get(componentTypeId).push(comp);
+                        }
+                    }
+                    else {
+                        this.compTid2Obj.set(componentTypeId, comp);
+                    }
+                }
+            }
+
+            if(hasComp) {
+                this[compName] = null;
+                this.mask.delete(componentTypeId);
+                this.compTid2Ctor.delete(componentTypeId);
+                broadcastCompAddOrRemove(this, componentTypeId);
+            }
+        }
+
+        private _remove(comp: CompType<IComp>) {
+            this.remove(comp, false);
         }
 
         /**
@@ -541,6 +584,7 @@ export module ecs {
         destroy() {
             this.compTid2Ctor.forEach(this._remove, this);
             destroyEntity(this);
+            this.compTid2Obj.clear();
         }
     }
 
@@ -595,11 +639,6 @@ export module ecs {
                     this._enteredEntities.set(entity.eid, entity);
                     this._removedEntities!.delete(entity.eid);
                 }
-
-                // 添加“能力”组件
-                if(groupListenAdd.has(this.matcher.mid)) {
-                    entity.add(groupListenAdd.get(this.matcher.mid));
-                }
             }
             else if (this._matchEntities.has(entity.eid)) { // 如果Group中有这个实体，但是这个实体已经不满足匹配规则，则从Group中移除该实体
                 this._matchEntities.delete(entity.eid);
@@ -609,10 +648,6 @@ export module ecs {
                 if(this._enteredEntities) {
                     this._enteredEntities.delete(entity.eid);
                     this._removedEntities!.set(entity.eid, entity);
-                }
-
-                if(groupListenRemove.has(this.matcher.mid)) {
-                    entity.remove(groupListenRemove.get(this.matcher.mid));
                 }
             }
         }
@@ -634,7 +669,7 @@ export module ecs {
     abstract class BaseOf {
         protected mask = new Mask();
         public indices: number[] = [];
-        constructor(...args: ComponentType[]) {
+        constructor(...args: CompType<IComp>[]) {
             let componentTypeId = -1;
             let len = args.length;
             for (let i = 0; i < len; i++) {
@@ -642,7 +677,7 @@ export module ecs {
                     componentTypeId = args[i] as number;
                 }
                 else {
-                    componentTypeId = (args[i] as ComponentConstructor<IComponent>).tid;
+                    componentTypeId = (args[i] as CompCtor<IComp>).tid;
                 }
                 if (componentTypeId == -1) {
                     throw Error('存在没有注册的组件！');
@@ -766,7 +801,7 @@ export module ecs {
          * 组件间是或的关系，表示关注拥有任意一个这些组件的实体。
          * @param args 组件索引
          */
-        public anyOf(...args: ComponentType[]): Matcher {
+        public anyOf(...args: CompType<IComp>[]): Matcher {
             this.rules.push(new AnyOf(...args));
             return this;
         }
@@ -775,7 +810,7 @@ export module ecs {
          * 组件间是与的关系，表示关注拥有所有这些组件的实体。
          * @param args 组件索引
          */
-        public allOf(...args: ComponentType[]): Matcher {
+        public allOf(...args: CompType<IComp>[]): Matcher {
             this.rules.push(new AllOf(...args));
             return this;
         }
@@ -787,10 +822,10 @@ export module ecs {
          *  不是特殊情况不建议使用onlyOf。因为onlyOf会监听所有组件的添加和删除事件。
          * @param args 组件索引
          */
-        public onlyOf(...args: ComponentType[]): Matcher {
+        public onlyOf(...args: CompType<IComp>[]): Matcher {
             this.rules.push(new AllOf(...args));
-            let otherTids: ComponentType[] = [];
-            for (let ctor of componentConstructors) {
+            let otherTids: CompType<IComp>[] = [];
+            for (let ctor of compCtors) {
                 if (args.indexOf(ctor) < 0) {
                     otherTids.push(ctor);
                 }
@@ -803,7 +838,7 @@ export module ecs {
          * 不包含指定的任意一个组件
          * @param args 
          */
-        public excludeOf(...args: ComponentType[]) {
+        public excludeOf(...args: CompType<IComp>[]) {
             this.rules.push(new ExcludeOf(...args));
             return this;
         }
