@@ -491,7 +491,7 @@ export module ecs {
                 let compTid = tmpCtor.tid;
                 // console.assert(compTid !== -1 || !compTid, '组件未注册！');
                 // console.assert(this.compTid2Ctor.has(compTid), '已存在该组件！');
-                if(compTid === -1 || !compTid) {
+                if(compTid === -1 || compTid == null) {
                     throw Error('组件未注册！');
                 }
                 if(this.compTid2Ctor.has(compTid)) {
@@ -515,9 +515,18 @@ export module ecs {
             return this;
         }
 
-        get<T extends IComp>(ctor: CompCtor<T>): T {
+        get(ctor: number): number;
+        get<T extends IComp>(ctor: CompCtor<T>): T;
+        get<T extends IComp>(ctor: CompCtor<T> | number): T {
+            let compName: string;
+            if(typeof(ctor) === 'number') {
+                compName = tags.get(ctor)!;
+            }
+            else {
+                compName = ctor.compName;
+            }
             // @ts-ignore
-            return this[ctor.compName];
+            return this[compName];
         }
 
         has(ctor: CompType<IComp>): boolean {
@@ -792,7 +801,6 @@ export module ecs {
                 this.rules.forEach((rule) => {
                     Array.prototype.push.apply(this._indices, rule.indices);
                 });
-                this.bindMatchMethod();
             }
             return this._indices;
         }
@@ -803,6 +811,7 @@ export module ecs {
          */
         public anyOf(...args: CompType<IComp>[]): Matcher {
             this.rules.push(new AnyOf(...args));
+            this.bindMatchMethod();
             return this;
         }
 
@@ -812,6 +821,7 @@ export module ecs {
          */
         public allOf(...args: CompType<IComp>[]): Matcher {
             this.rules.push(new AllOf(...args));
+            this.bindMatchMethod();
             return this;
         }
 
@@ -831,6 +841,7 @@ export module ecs {
                 }
             }
             this.rules.push(new ExcludeOf(...otherTids));
+            this.bindMatchMethod();
             return this;
         }
 
@@ -840,6 +851,7 @@ export module ecs {
          */
         public excludeOf(...args: CompType<IComp>[]) {
             this.rules.push(new ExcludeOf(...args));
+            this.bindMatchMethod();
             return this;
         }
 
