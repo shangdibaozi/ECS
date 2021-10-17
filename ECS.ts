@@ -166,7 +166,7 @@ export module ecs {
      * 创建组件对象
      * @param ctor
      */
-    function createComp<T extends IComp>(ctor: CompCtor<T>): T {
+    export function createComp<T extends IComp>(ctor: CompCtor<T>): T {
         if(!compCtors[ctor.tid]) {
             throw Error(`没有找到该组件的构造函数，检查${ctor.compName}是否为不可构造的组件`);
         }
