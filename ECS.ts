@@ -166,7 +166,7 @@ export module ecs {
      * 创建组件对象
      * @param ctor
      */
-    export function createComp<T extends IComp>(ctor: CompCtor<T>): T {
+    function createComp<T extends IComp>(ctor: CompCtor<T>): T {
         if(!compCtors[ctor.tid]) {
             throw Error(`没有找到该组件的构造函数，检查${ctor.compName}是否为不可构造的组件`);
         }
@@ -178,7 +178,12 @@ export module ecs {
      * 指定一个组件创建实体，返回组件对象。
      * @param ctor 
      */
-    export function createEntityWithComp<T extends IComp>(ctor: CompCtor<T>): T {
+    export function createEntityWithComp<T extends IComp>(obj: T): Entity;
+    export function createEntityWithComp(ctor: number): Entity;
+    export function createEntityWithComp<T extends IComp>(ctor: CompType<T>): T;
+    // export function createEntityWithComp<T extends IComp>(ctor: CompCtor<T>): T;
+    // export function createEntityWithComp<T extends IComp>(ctor: CompType<T> | T): T | Entity;
+    export function createEntityWithComp<T extends IComp>(ctor: CompType<T>): T | Entity {
         let entity = createEntity();
         return entity.add(ctor);
     }
@@ -432,10 +437,10 @@ export module ecs {
          */
         add<T extends IComp>(obj: T): Entity;
         add(ctor: number, isReAdd?: boolean): Entity;
-        add<T extends IComp>(ctor: CompCtor<T>, isReAdd?: boolean): T;
+        // add<T extends IComp>(ctor: CompCtor<T>, isReAdd?: boolean): T;
         add<T extends IComp>(ctor: CompType<T>, isReAdd?: boolean): T;
         add<T extends IComp>(ctor: CompType<T> | T, isReAdd: boolean = false): T | Entity  {
-            console.log('typeof: ', typeof ctor);
+            // console.log('typeof: ', typeof ctor);
             if(typeof ctor === 'function') {
                 let compTid = ctor.tid;
                 if(ctor.tid === -1) {

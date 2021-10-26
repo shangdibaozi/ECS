@@ -3,10 +3,10 @@
 
 # 使用说明
 ## 组件
-自定义组件必须继承ecs.IComponent，并且需要使用ecs.register注册组件。
+自定义组件必须继承ecs.Comp，并且需要使用ecs.register注册组件。
 ```TypeScript
 @ecs.register('Hello')
-export class HelloComponent extends ecs.IComponent {
+export class HelloComponent extends ecs.Comp {
     info: string;
     data: number;
 
@@ -136,7 +136,7 @@ ecs.query(ecs.allOf(Comp1, Comp2))
 1、声明组件
 ```TypeScript
 @ecs.register('Node')
-export class NodeComponent extends ecs.IComponent {
+export class NodeComponent extends ecs.Comp {
     val: cc.Node = null;
 
     reset() {
@@ -145,7 +145,7 @@ export class NodeComponent extends ecs.IComponent {
 }
 
 @ecs.reigster('Move')
-export class MoveComponent extends ecs.IComponent {
+export class MoveComponent extends ecs.Comp {
     heading: cc.Vec2 = cc.v2();
     speed: number = 0;
 
@@ -157,7 +157,7 @@ export class MoveComponent extends ecs.IComponent {
 }
 
 @ecs.register('Transform')
-export class TransformComponent extends ecs.IComponent {
+export class TransformComponent extends ecs.Comp {
     position: cc.Vec2 = cc.v2();
     angle: number;
     reset() {

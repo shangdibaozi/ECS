@@ -12,7 +12,12 @@ class MoveComp extends ecs.Comp {
     }
 }
 
+@ecs.register('Obj', false)
+class ObjComp extends ecs.Comp {
+    reset() {
 
+    }
+}
 
 test('ent.add(MoveComp)', () => {
     let ent = ecs.createEntity<Ent>();
@@ -59,4 +64,14 @@ test('ent.add(tag)', () => {
     ent.remove(ECSTag.Tag1);
     expect(ent.has(ECSTag.Tag1)).toBe(false);
     expect(ent.get(ECSTag.Tag1)).toBe(null);
+});
+
+test('ent destroy', () => {
+    let ent = ecs.createEntity();
+    ent.add(MoveComp);
+    ent.add(new ObjComp());
+
+    ent.destroy();
+    expect(ent.has(MoveComp)).toBe(false);
+    expect(ent.has(ObjComp)).toBe(false);
 });
