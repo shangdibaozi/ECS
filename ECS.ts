@@ -20,25 +20,25 @@ export module ecs {
         /**
          * 组件的类型id，-1表示未给该组件分配id
          */
-         static tid: number = -1;
-         static compName: string;
-         /**
-          * 拥有该组件的实体
-          */
-         ent!: Entity;
+        static tid: number = -1;
+        static compName: string;
+        /**
+         * 拥有该组件的实体
+         */
+        ent!: Entity;
 
-         /**
-          * 是否可回收组件对象，默认情况下都是可回收的。
-          * 如果该组件对象是由ecs系统外部创建的，则不可回收，需要用户自己手动进行回收。
-          */
-          canRecycle: boolean = true;
+        /**
+         * 是否可回收组件对象，默认情况下都是可回收的。
+         * 如果该组件对象是由ecs系统外部创建的，则不可回收，需要用户自己手动进行回收。
+         */
+        canRecycle: boolean = true;
 
-         /**
-          * 组件被回收时会调用这个接口。可以在这里重置数据，或者解除引用。
-          * 
-          * **不要偷懒，除非你能确定并保证组件在复用时，里面的数据是先赋值然后再使用。**
-          */
-         abstract reset(): void;
+        /**
+         * 组件被回收时会调用这个接口。可以在这里重置数据，或者解除引用。
+         * 
+         * **不要偷懒，除非你能确定并保证组件在复用时，里面的数据是先赋值然后再使用。**
+         */
+        abstract reset(): void;
     }
 
     //#region 类型声明
@@ -69,9 +69,9 @@ export module ecs {
      * 每个组件的添加和删除的动作都要派送到“关心”它们的group上。goup对当前拥有或者之前（删除前）拥有该组件的实体进行组件规则判断。判断该实体是否满足group
      * 所期望的组件组合。
      */
-     let compAddOrRemove: Map<number, CompAddOrRemove[]> = new Map();
+    let compAddOrRemove: Map<number, CompAddOrRemove[]> = new Map();
 
-     let tags: Map<number, string> = new Map();
+    let tags: Map<number, string> = new Map();
 
     /**
      * 注册组件到ecs系统中
@@ -83,7 +83,7 @@ export module ecs {
             if (ctor.tid === -1) {
                 ctor.tid = compTid++;
                 ctor.compName = compName;
-                if(canNew) {
+                if (canNew) {
                     compCtors.push(ctor);
                     compPools.set(ctor.tid, []);
                 }
@@ -110,9 +110,9 @@ export module ecs {
      * @returns 
      */
     export function registerTag() {
-        return function(_class: any) {
+        return function (_class: any) {
             let tid = compTid;
-            for(let k in _class) {
+            for (let k in _class) {
                 tid = compTid++;
                 _class[k] = tid;
                 compCtors.push(tid);
@@ -135,7 +135,7 @@ export module ecs {
      * 通过实体id查找实体对象
      */
     let eid2Entity: Map<number, Entity> = new Map();
-    
+
     /**
      * 缓存的group
      * 
@@ -153,7 +153,7 @@ export module ecs {
      */
     export function createEntity<E extends Entity = Entity>(): E {
         let entity = entityPool.pop();
-        if(!entity) {
+        if (!entity) {
             entity = new Entity();
             // @ts-ignore
             entity.eid = eid++; // 实体id也是有限的资源
@@ -167,7 +167,7 @@ export module ecs {
      * @param ctor
      */
     function createComp<T extends IComp>(ctor: CompCtor<T>): T {
-        if(!compCtors[ctor.tid]) {
+        if (!compCtors[ctor.tid]) {
             throw Error(`没有找到该组件的构造函数，检查${ctor.compName}是否为不可构造的组件`);
         }
         let component = compPools.get(ctor.tid)!.pop() || new (compCtors[ctor.tid] as CompCtor<T>);
@@ -238,7 +238,7 @@ export module ecs {
      */
     export function query<E extends Entity = Entity>(matcher: IMatcher): E[] {
         let group = groups.get(matcher.mid);
-        if(!group) {
+        if (!group) {
             group = createGroup(matcher);
             eid2Entity.forEach(group.onComponentAddOrRemove, group);
         }
@@ -354,7 +354,7 @@ export module ecs {
      */
     export function addSingleton(obj: IComp) {
         let tid = (obj.constructor as CompCtor<IComp>).tid;
-        if(!tid2comp.has(tid)) {
+        if (!tid2comp.has(tid)) {
             tid2comp.set(tid, obj);
         }
     }
@@ -424,7 +424,7 @@ export module ecs {
 
         private compTid2Obj: Map<number, IComp> = new Map();
 
-        constructor() {}
+        constructor() { }
 
         /**
          * 根据组件id动态创建组件，并通知关心的系统。
@@ -439,15 +439,15 @@ export module ecs {
         add(ctor: number, isReAdd?: boolean): Entity;
         // add<T extends IComp>(ctor: CompCtor<T>, isReAdd?: boolean): T;
         add<T extends IComp>(ctor: CompType<T>, isReAdd?: boolean): T;
-        add<T extends IComp>(ctor: CompType<T> | T, isReAdd: boolean = false): T | Entity  {
+        add<T extends IComp>(ctor: CompType<T> | T, isReAdd: boolean = false): T | Entity {
             // console.log('typeof: ', typeof ctor);
-            if(typeof ctor === 'function') {
+            if (typeof ctor === 'function') {
                 let compTid = ctor.tid;
-                if(ctor.tid === -1) {
+                if (ctor.tid === -1) {
                     throw Error('组件未注册！');
                 }
                 if (this.compTid2Ctor.has(compTid)) {// 判断是否有该组件，如果有则先移除
-                    if(isReAdd) {
+                    if (isReAdd) {
                         this.remove(ctor);
                     }
                     else {
@@ -457,9 +457,9 @@ export module ecs {
                     }
                 }
                 this.mask.set(compTid);
-    
+
                 let comp: T;
-                if(this.compTid2Obj.has(compTid)) {
+                if (this.compTid2Obj.has(compTid)) {
                     comp = this.compTid2Obj.get(compTid) as T;
                     this.compTid2Obj.delete(compTid);
                 }
@@ -474,11 +474,11 @@ export module ecs {
                 comp.ent = this;
                 // 广播实体添加组件的消息
                 broadcastCompAddOrRemove(this, compTid);
-    
+
                 return comp;
             }
-            else if(typeof ctor === 'number') {
-                if(tags.has(ctor)) {
+            else if (typeof ctor === 'number') {
+                if (tags.has(ctor)) {
                     this.mask.set(ctor);
                     this.compTid2Ctor.set(ctor, ctor);
                     let tagName = tags.get(ctor)!;
@@ -496,13 +496,13 @@ export module ecs {
                 let compTid = tmpCtor.tid;
                 // console.assert(compTid !== -1 || !compTid, '组件未注册！');
                 // console.assert(this.compTid2Ctor.has(compTid), '已存在该组件！');
-                if(compTid === -1 || compTid == null) {
+                if (compTid === -1 || compTid == null) {
                     throw Error('组件未注册！');
                 }
-                if(this.compTid2Ctor.has(compTid)) {
+                if (this.compTid2Ctor.has(compTid)) {
                     throw Error('已经存在该组件！');
                 }
-                
+
                 this.mask.set(compTid);
                 this[tmpCtor.compName] = ctor;
                 this.compTid2Ctor.set(compTid, tmpCtor);
@@ -514,7 +514,7 @@ export module ecs {
         }
 
         addComponents<T extends IComp>(...ctors: CompType<T>[]) {
-            for(let ctor of ctors) {
+            for (let ctor of ctors) {
                 this.add(ctor);
             }
             return this;
@@ -524,7 +524,7 @@ export module ecs {
         get<T extends IComp>(ctor: CompCtor<T>): T;
         get<T extends IComp>(ctor: CompCtor<T> | number): T {
             let compName: string;
-            if(typeof(ctor) === 'number') {
+            if (typeof (ctor) === 'number') {
                 compName = tags.get(ctor)!;
             }
             else {
@@ -535,7 +535,7 @@ export module ecs {
         }
 
         has(ctor: CompType<IComp>): boolean {
-            if(typeof ctor == "number") {
+            if (typeof ctor == "number") {
                 return this.mask.has(ctor);
             }
             else {
@@ -554,9 +554,9 @@ export module ecs {
             let componentTypeId = -1;
             let compName = '';
             let hasComp = false;
-            if(typeof ctor === "number") {
+            if (typeof ctor === "number") {
                 componentTypeId = ctor;
-                if(this.mask.has(ctor)) {
+                if (this.mask.has(ctor)) {
                     hasComp = true;
                     compName = tags.get(ctor)!;
                 }
@@ -568,9 +568,9 @@ export module ecs {
                     hasComp = true;
                     let comp = this[ctor.compName] as IComp;
                     comp.ent = null;
-                    if(isRecycle) {
+                    if (isRecycle) {
                         comp.reset();
-                        if(comp.canRecycle) {
+                        if (comp.canRecycle) {
                             compPools.get(componentTypeId).push(comp);
                         }
                     }
@@ -580,7 +580,7 @@ export module ecs {
                 }
             }
 
-            if(hasComp) {
+            if (hasComp) {
                 this[compName] = null;
                 this.mask.delete(componentTypeId);
                 this.compTid2Ctor.delete(componentTypeId);
@@ -649,7 +649,7 @@ export module ecs {
                 this._entitiesCache = null;
                 this.count++;
 
-                if(this._enteredEntities) {
+                if (this._enteredEntities) {
                     this._enteredEntities.set(entity.eid, entity);
                     this._removedEntities!.delete(entity.eid);
                 }
@@ -659,7 +659,7 @@ export module ecs {
                 this._entitiesCache = null;
                 this.count--;
 
-                if(this._enteredEntities) {
+                if (this._enteredEntities) {
                     this._enteredEntities.delete(entity.eid);
                     this._removedEntities!.set(entity.eid, entity);
                 }
@@ -687,7 +687,7 @@ export module ecs {
             let componentTypeId = -1;
             let len = args.length;
             for (let i = 0; i < len; i++) {
-                if(typeof(args[i]) === "number") {
+                if (typeof (args[i]) === "number") {
                     componentTypeId = args[i] as number;
                 }
                 else {
@@ -780,7 +780,7 @@ export module ecs {
 
         private _key: string | null = null;
         public get key(): string {
-            if(!this._key) {
+            if (!this._key) {
                 let s = '';
                 for (let i = 0; i < this.rules.length; i++) {
                     s += this.rules[i].getKey()
@@ -861,10 +861,10 @@ export module ecs {
         }
 
         private bindMatchMethod() {
-            if(this.rules.length === 1) {
+            if (this.rules.length === 1) {
                 this.isMatch = this.isMatch1;
             }
-            else if(this.rules.length === 2) {
+            else if (this.rules.length === 2) {
                 this.isMatch = this.isMatch2;
             }
             else {
@@ -945,7 +945,7 @@ export module ecs {
             this.hasEntityEnter = hasEntityEnter;
             this.hasEntityRemove = hasEntityRemove;
 
-            if(hasEntityEnter || hasEntityRemove) {
+            if (hasEntityEnter || hasEntityRemove) {
                 this.enteredEntities = new Map<number, E>();
                 this.removedEntities = new Map<number, E>();
 
@@ -958,7 +958,7 @@ export module ecs {
                 this.group = createGroup(this.filter());
             }
 
-            if(hasFirstUpdate) {
+            if (hasFirstUpdate) {
                 this.tmpExecute = this.execute;
                 this.execute = this.updateOnce;
             }
@@ -977,7 +977,7 @@ export module ecs {
         }
 
         private updateOnce(dt: number) {
-            if(this.group.count === 0) {
+            if (this.group.count === 0) {
                 return;
             }
             this.dt = dt;
@@ -998,7 +998,7 @@ export module ecs {
          * @returns 
          */
         private execute0(dt: number): void {
-            if(this.group.count === 0) {
+            if (this.group.count === 0) {
                 return;
             }
             this.dt = dt;
@@ -1011,19 +1011,19 @@ export module ecs {
          * @returns 
          */
         private execute1(dt: number): void {
-            if(this.removedEntities!.size > 0) {
-                if(this.hasEntityRemove) {
+            if (this.removedEntities!.size > 0) {
+                if (this.hasEntityRemove) {
                     (this as unknown as IEntityRemoveSystem).entityRemove(Array.from(this.removedEntities!.values()) as E[]);
                 }
                 this.removedEntities!.clear();
             }
-            if(this.group.count === 0) {
+            if (this.group.count === 0) {
                 return;
             }
             this.dt = dt;
             // 处理刚进来的实体
             if (this.enteredEntities!.size > 0) {
-                if(this.hasEntityEnter) {
+                if (this.hasEntityEnter) {
                     (this as unknown as IEntityEnterSystem).entityEnter(Array.from(this.enteredEntities!.values()) as E[]);
                 }
                 this.enteredEntities!.clear();
@@ -1049,8 +1049,8 @@ export module ecs {
         private executeSystemFlows: ComblockSystem[] = [];
         private systemCnt: number = 0;
 
-        add(system: System | ComblockSystem){
-            if(system instanceof System) {
+        add(system: System | ComblockSystem) {
+            if (system instanceof System) {
                 // 将嵌套的System都“摊平”，放在根System中进行遍历，减少execute的频繁进入退出。
                 Array.prototype.push.apply(this.executeSystemFlows, system.comblockSystems);
             }
