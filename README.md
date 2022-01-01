@@ -2,6 +2,7 @@
 这是一个Typescript语言版的Entity-Component-System框架。框架参考了Unity的[Entitas](https://github.com/sschmid/Entitas-CSharp)框架。
 
 # 案例
+【[Crimsonland](https://github.com/shangdibaozi/Crimsonland)】
 【[InfinityWar](https://github.com/shangdibaozi/InfinityWar)】
 
 # 使用说明
