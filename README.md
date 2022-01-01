@@ -188,7 +188,7 @@ export class MoveSystem extends ecs.ComblockSystem<AvatarEntity> implements ecs.
     
     }
 
-    filter(): ecs.Matcher {
+    filter(): ecs.IMatcher {
         return ecs.allOf(MoveComponent, TransformComponent);
     }
 
@@ -214,7 +214,7 @@ export class MoveSystem extends ecs.ComblockSystem<AvatarEntity> implements ecs.
 }
 
 export class RenderSystem extends.ecs.ComblockSystem<AvatarEntity> implements ecs.IEntityEnterSystem, ecs.IEntityRemoveSystem {
-    filter(): ecs.Matcher {
+    filter(): ecs.IMatcher {
         return ecs.allOf(NodeComponent, TransformComponent);
     }
     
